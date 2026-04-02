@@ -1,14 +1,14 @@
 :root {
-  --bg-top: #e7efe3;
-  --bg-bottom: #c9d5b8;
-  --panel: rgba(251, 248, 238, 0.9);
-  --panel-border: rgba(66, 86, 55, 0.22);
-  --ink: #24301f;
-  --muted: #5b6950;
-  --accent: #486f3e;
-  --accent-strong: #36572f;
-  --canvas: #f4efe0;
-  --shadow: rgba(25, 33, 24, 0.16);
+  --bg-top: #f8f9df;
+  --bg-bottom: #d9ecb6;
+  --panel: rgba(255, 252, 242, 0.92);
+  --panel-border: rgba(116, 161, 71, 0.22);
+  --ink: #284117;
+  --muted: #648046;
+  --accent: #6ca03d;
+  --accent-strong: #4d8427;
+  --canvas: #f7f7ec;
+  --shadow: rgba(86, 120, 46, 0.15);
 }
 
 * {
@@ -21,7 +21,7 @@ body {
   font-family: "Trebuchet MS", "Segoe UI", sans-serif;
   color: var(--ink);
   background:
-    radial-gradient(circle at top, rgba(255, 255, 255, 0.6), transparent 40%),
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.78), transparent 42%),
     linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
 }
 
@@ -124,10 +124,11 @@ button:disabled {
   max-width: 720px;
   margin: 0 auto;
   border-radius: 18px;
-  border: 1px solid rgba(46, 57, 43, 0.12);
+  border: 1px solid rgba(124, 167, 70, 0.26);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.4), transparent 18%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.52), transparent 18%),
     var(--canvas);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
 }
 
 @media (max-width: 760px) {

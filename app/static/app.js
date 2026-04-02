@@ -48,7 +48,9 @@ function drawViewport() {
   context.clearRect(0, 0, canvas.width, canvas.height);
 
   if (!hasWorld()) {
-    context.fillStyle = "#5b6950";
+    context.fillStyle = "#f7f7ec";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#5f8f33";
     context.font = "24px Trebuchet MS";
     context.textAlign = "center";
     context.fillText("Generate a map to begin.", canvas.width / 2, canvas.height / 2);
@@ -57,9 +59,11 @@ function drawViewport() {
 
   const camera = cameraOrigin();
 
+  context.fillStyle = "#f7f7ec";
+  context.fillRect(0, 0, canvas.width, canvas.height);
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.font = "32px 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif";
+  context.font = "34px 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif";
 
   for (let row = 0; row < state.viewport.height; row += 1) {
     for (let col = 0; col < state.viewport.width; col += 1) {
@@ -69,7 +73,7 @@ function drawViewport() {
       const centerX = col * tileSize + tileSize / 2;
       const centerY = row * tileSize + tileSize / 2;
 
-      context.fillStyle = row % 2 === col % 2 ? "rgba(46, 57, 43, 0.04)" : "rgba(255, 255, 255, 0.06)";
+      context.fillStyle = row % 2 === col % 2 ? "#ffffff" : "#fbfbf2";
       context.fillRect(col * tileSize, row * tileSize, tileSize, tileSize);
 
       context.fillText(tile, centerX, centerY + 2);
