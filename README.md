@@ -1,4 +1,4 @@
-# ollama-rpg
+# ollama-rpg2
 
 A browser-based top-down open-world RPG game built with FastAPI, vanilla JavaScript, canvas text rendering, local Ollama integration, and backend-authoritative runtime state.
 
@@ -9,6 +9,4 @@ A browser-based top-down open-world RPG game built with FastAPI, vanilla JavaScr
 - Rendering: HTML5 canvas with semantic glyph mapping
 - AI: Ollama at `OLLAMA_BASE_URL`
 - Persistence: one browser `localStorage` autosave slot
-
-## Features
 
