@@ -8,6 +8,11 @@ from pathlib import Path
 class TileCatalog:
     player: str
     ground: tuple[str, ...]
+    road: str
+    village: str
+    habitable: frozenset[str]
+    blocked: frozenset[str]
+    rough: frozenset[str]
 
 
 ASSET_PATH = Path(__file__).resolve().parent.parent / "assets" / "unicode" / "emoji-rpg.txt"
@@ -51,4 +56,26 @@ def load_tile_catalog(asset_path: Path = ASSET_PATH) -> TileCatalog:
     if not ground_tiles:
         raise ValueError("No ground tiles found in emoji-rpg.txt")
 
-    return TileCatalog(player=player_tile, ground=tuple(ground_tiles))
+    lookup = {tile: tile for tile in ground_tiles}
+
+    required = {
+        "road": "🟥",
+        "village": "🟪",
+        "grass": "🟩",
+        "sand": "🟨",
+        "soil": "🟫",
+        "rock": "⬛",
+    }
+    missing = [name for name, tile in required.items() if tile not in lookup]
+    if missing:
+        raise ValueError(f"Missing required terrain tiles: {', '.join(missing)}")
+
+    return TileCatalog(
+        player=player_tile,
+        ground=tuple(ground_tiles),
+        road=lookup["🟥"],
+        village=lookup["🟪"],
+        habitable=frozenset((lookup["🟩"], lookup["🟨"], lookup["🟫"])),
+        blocked=frozenset(tile for tile in (lookup.get("🟦"),) if tile is not None),
+        rough=frozenset(tile for tile in (lookup["⬛"], lookup.get("⬜")) if tile is not None),
+    )
