@@ -18,6 +18,8 @@ MIN_VILLAGE_SIZE = 10
 MAX_VILLAGE_SIZE = 20
 BUILDING_MIN_GAP = 3
 BUILDING_DENSITY = 0.035
+NPC_MIN_GAP = 3
+NPC_DENSITY = 0.015
 MIN_TERRAIN_SPOT_SIZE = 10
 MAX_TERRAIN_SPOT_SIZE = 30
 FOREST_TREE_DENSITY = 0.08
@@ -32,9 +34,17 @@ class PlayerSpawn:
 
 
 @dataclass(frozen=True)
+class NPCSpawn:
+    x: int
+    y: int
+    tile: str
+
+
+@dataclass(frozen=True)
 class GeneratedMap:
     world: list[list[str]]
     player: PlayerSpawn
+    npcs: list[NPCSpawn]
 
 
 @dataclass(frozen=True)
@@ -269,6 +279,46 @@ def _stamp_buildings(
                 break
 
 
+def _can_place_npc(x: int, y: int, occupied: list[tuple[int, int]]) -> bool:
+    return all(
+        max(abs(x - other_x), abs(y - other_y)) >= NPC_MIN_GAP
+        for other_x, other_y in occupied
+    )
+
+
+def _spawn_village_npcs(
+    world: list[list[str]],
+    villages: list[Village],
+    player: PlayerSpawn,
+    catalog: TileCatalog,
+    rng: Random,
+) -> list[NPCSpawn]:
+    npcs: list[NPCSpawn] = []
+    occupied = [(player.x, player.y)]
+
+    for village in villages:
+        left, right, top, bottom = _village_bounds(village)
+        candidates = [
+            (x, y)
+            for y in range(top + 1, bottom)
+            for x in range(left + 1, right)
+            if world[y][x] == catalog.village
+        ]
+        rng.shuffle(candidates)
+        target_count = max(1, int(village.width * village.height * NPC_DENSITY))
+        placed_in_village = 0
+
+        for x, y in candidates:
+            if _can_place_npc(x, y, occupied):
+                npcs.append(NPCSpawn(x=x, y=y, tile=rng.choice(catalog.npcs)))
+                occupied.append((x, y))
+                placed_in_village += 1
+                if placed_in_village >= target_count:
+                    break
+
+    return npcs
+
+
 def _select_village_centers(
     world: list[list[str]], catalog: TileCatalog, rng: Random
 ) -> list[Village]:
@@ -445,4 +495,5 @@ def generate_map(catalog: TileCatalog) -> GeneratedMap:
         _carve_road(world, start, end, catalog, seed + index * 101)
 
     player = _find_spawn(world, catalog.player, catalog)
-    return GeneratedMap(world=world, player=player)
+    npcs = _spawn_village_npcs(world, villages, player, catalog, rng)
+    return GeneratedMap(world=world, player=player, npcs=npcs)

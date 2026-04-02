@@ -7,6 +7,7 @@ from pathlib import Path
 @dataclass(frozen=True)
 class TileCatalog:
     player: str
+    npcs: tuple[str, ...]
     ground: tuple[str, ...]
     trees: tuple[str, ...]
     plants: tuple[str, ...]
@@ -35,6 +36,7 @@ def _extract_emoji(line: str) -> str:
 def load_tile_catalog(asset_path: Path = ASSET_PATH) -> TileCatalog:
     current_section: str | None = None
     player_tile: str | None = None
+    npc_tiles: list[str] = []
     ground_tiles: list[str] = []
     tree_tiles: list[str] = []
     plant_tiles: list[str] = []
@@ -54,6 +56,8 @@ def load_tile_catalog(asset_path: Path = ASSET_PATH) -> TileCatalog:
 
         if current_section == "Player" and player_tile is None:
             player_tile = _extract_emoji(line)
+        elif current_section == "NPCs":
+            npc_tiles.append(_extract_emoji(line))
         elif current_section == "Ground":
             ground_tiles.append(_extract_emoji(line))
         elif current_section == "Trees":
@@ -65,6 +69,8 @@ def load_tile_catalog(asset_path: Path = ASSET_PATH) -> TileCatalog:
 
     if player_tile is None:
         raise ValueError("No player tile found in emoji-rpg.txt")
+    if not npc_tiles:
+        raise ValueError("No NPC tiles found in emoji-rpg.txt")
     if not ground_tiles:
         raise ValueError("No ground tiles found in emoji-rpg.txt")
     if not tree_tiles:
@@ -89,6 +95,7 @@ def load_tile_catalog(asset_path: Path = ASSET_PATH) -> TileCatalog:
 
     return TileCatalog(
         player=player_tile,
+        npcs=tuple(npc_tiles),
         ground=tuple(ground_tiles),
         trees=tuple(tree_tiles),
         plants=tuple(plant_tiles),

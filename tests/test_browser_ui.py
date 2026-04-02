@@ -55,6 +55,7 @@ HTML_SHELL = """
 
 MOCK_WORLD = [["🟩" for _ in range(128)] for _ in range(128)]
 MOCK_PLAYER = {"x": 10, "y": 10, "tile": "🙂"}
+MOCK_NPCS = [{"x": 12, "y": 10, "tile": "🧑‍🦱"}]
 
 
 def _parse_position(label: str) -> tuple[int, int]:
@@ -88,6 +89,7 @@ def test_browser_can_generate_map_and_move_player() -> None:
                         {
                             "world": MOCK_WORLD,
                             "player": MOCK_PLAYER,
+                            "npcs": MOCK_NPCS,
                             "viewport": {"width": 30, "height": 22},
                         },
                         ensure_ascii=False,

@@ -62,6 +62,7 @@ def test_tile_catalog_loads_expected_sections() -> None:
 
     assert catalog.player == "🙂"
     assert {"🟢", "🟥", "🟩", "🟪", "🟫"}.issubset(set(catalog.ground))
+    assert len(catalog.npcs) > 0
     assert len(catalog.trees) > 0
     assert len(catalog.plants) > 0
     assert len(catalog.buildings) > 0
@@ -79,6 +80,7 @@ def test_generate_map_response_shape_and_tiles() -> None:
     payload = json.loads(response.body)
     world = payload["world"]
     player = payload["player"]
+    npcs = payload["npcs"]
     viewport = payload["viewport"]
     catalog = load_tile_catalog()
 
@@ -112,6 +114,8 @@ def test_generate_map_response_shape_and_tiles() -> None:
     assert 0 <= player["x"] < WORLD_WIDTH
     assert 0 <= player["y"] < WORLD_HEIGHT
     assert world[player["y"]][player["x"]] != "🟦"
+    assert npcs
+    assert all(npc["tile"] in catalog.npcs for npc in npcs)
 
     assert viewport == {"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT}
 
@@ -119,6 +123,7 @@ def test_generate_map_response_shape_and_tiles() -> None:
     village_clusters = _find_clusters(world, settlement_tiles)
     assert 4 <= len(village_clusters) <= MAX_VILLAGES
     assert all(100 <= len(cluster) <= 400 for cluster in village_clusters)
+    assert all(world[npc["y"]][npc["x"]] == catalog.village for npc in npcs)
     building_positions = [
         (x, y)
         for y, row in enumerate(world)

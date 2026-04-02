@@ -34,6 +34,10 @@ async def create_map() -> Response:
             "y": generated.player.y,
             "tile": generated.player.tile,
         },
+        "npcs": [
+            {"x": npc.x, "y": npc.y, "tile": npc.tile}
+            for npc in generated.npcs
+        ],
         "viewport": {"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT},
     }
     return Response(

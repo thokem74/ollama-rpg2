@@ -7,6 +7,7 @@ const playerPosition = document.getElementById("player-position");
 const state = {
   world: [],
   player: null,
+  npcs: [],
   viewport: { width: 30, height: 22 },
 };
 
@@ -83,6 +84,11 @@ function drawViewport() {
 
       context.fillText(tile, centerX, centerY + 2);
 
+      const npc = state.npcs.find((candidate) => candidate.x === worldX && candidate.y === worldY);
+      if (npc) {
+        context.fillText(npc.tile, centerX, centerY + 2);
+      }
+
       if (state.player.x === worldX && state.player.y === worldY) {
         context.fillText(state.player.tile, centerX, centerY + 2);
       }
@@ -103,6 +109,7 @@ async function generateMap() {
     const payload = await response.json();
     state.world = payload.world;
     state.player = payload.player;
+    state.npcs = payload.npcs ?? [];
     state.viewport = payload.viewport;
     updatePlayerLabel();
     drawViewport();
