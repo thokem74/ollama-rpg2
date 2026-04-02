@@ -1,0 +1,153 @@
+:root {
+  --bg-top: #e7efe3;
+  --bg-bottom: #c9d5b8;
+  --panel: rgba(251, 248, 238, 0.9);
+  --panel-border: rgba(66, 86, 55, 0.22);
+  --ink: #24301f;
+  --muted: #5b6950;
+  --accent: #486f3e;
+  --accent-strong: #36572f;
+  --canvas: #f4efe0;
+  --shadow: rgba(25, 33, 24, 0.16);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.6), transparent 40%),
+    linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
+}
+
+.app-shell {
+  width: min(1100px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 32px 0 40px;
+}
+
+.hero,
+.viewport-panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 24px;
+  box-shadow: 0 18px 40px var(--shadow);
+  backdrop-filter: blur(10px);
+}
+
+.hero {
+  padding: 28px;
+  margin-bottom: 22px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(2.2rem, 4vw, 3.8rem);
+  line-height: 1;
+  margin-bottom: 12px;
+}
+
+.intro {
+  max-width: 680px;
+  color: var(--muted);
+  font-size: 1.05rem;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-top: 22px;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  padding: 14px 22px;
+  font: inherit;
+  font-weight: 700;
+  color: #f8fbf4;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(54, 87, 47, 0.28);
+}
+
+button:disabled {
+  opacity: 0.65;
+  cursor: progress;
+}
+
+#status {
+  color: var(--muted);
+}
+
+.viewport-panel {
+  padding: 22px;
+}
+
+.viewport-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.viewport-header p,
+#player-position {
+  color: var(--muted);
+}
+
+#map-canvas {
+  display: block;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  border-radius: 18px;
+  border: 1px solid rgba(46, 57, 43, 0.12);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.4), transparent 18%),
+    var(--canvas);
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    width: min(100vw - 20px, 720px);
+    padding-top: 20px;
+  }
+
+  .hero,
+  .viewport-panel {
+    border-radius: 18px;
+  }
+
+  .hero,
+  .viewport-panel {
+    padding: 18px;
+  }
+
+  .viewport-header {
+    align-items: start;
+    flex-direction: column;
+  }
+}
