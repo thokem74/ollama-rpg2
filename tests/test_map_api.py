@@ -14,13 +14,14 @@ from app.mapgen import (
 )
 
 
-def _find_clusters(world: list[list[str]], target: str) -> list[set[tuple[int, int]]]:
+def _find_clusters(world: list[list[str]], target: str | set[str]) -> list[set[tuple[int, int]]]:
+    target_tiles = {target} if isinstance(target, str) else target
     seen: set[tuple[int, int]] = set()
     clusters: list[set[tuple[int, int]]] = []
 
     for y, row in enumerate(world):
         for x, tile in enumerate(row):
-            if tile != target or (x, y) in seen:
+            if tile not in target_tiles or (x, y) in seen:
                 continue
 
             cluster: set[tuple[int, int]] = set()
@@ -34,7 +35,7 @@ def _find_clusters(world: list[list[str]], target: str) -> list[set[tuple[int, i
                     nx = cx + dx
                     ny = cy + dy
                     if 0 <= nx < WORLD_WIDTH and 0 <= ny < WORLD_HEIGHT:
-                        if world[ny][nx] == target and (nx, ny) not in seen:
+                        if world[ny][nx] in target_tiles and (nx, ny) not in seen:
                             seen.add((nx, ny))
                             queue.append((nx, ny))
 
@@ -49,17 +50,24 @@ def _cluster_center(cluster: set[tuple[int, int]]) -> tuple[int, int]:
     return (round(sum(xs) / len(xs)), round(sum(ys) / len(ys)))
 
 
+def _largest_cluster_size(world: list[list[str]], target: str) -> int:
+    clusters = _find_clusters(world, target)
+    if not clusters:
+        return 0
+    return max(len(cluster) for cluster in clusters)
+
+
 def test_tile_catalog_loads_expected_sections() -> None:
     catalog = load_tile_catalog()
 
     assert catalog.player == "🙂"
-    assert catalog.ground == ("🟥", "🟨", "🟩", "🟪", "🟫", "⬛")
+    assert {"🟢", "🟥", "🟩", "🟪", "🟫"}.issubset(set(catalog.ground))
     assert len(catalog.buildings) > 0
     assert catalog.road == "🟥"
     assert catalog.village == "🟪"
-    assert catalog.habitable == frozenset(("🟨", "🟩", "🟫"))
+    assert catalog.habitable == frozenset(("🟩", "🟫"))
     assert catalog.blocked == frozenset()
-    assert catalog.rough == frozenset(("⬛",))
+    assert catalog.rough == frozenset()
 
 
 def test_generate_map_response_shape_and_tiles() -> None:
@@ -80,6 +88,20 @@ def test_generate_map_response_shape_and_tiles() -> None:
     assert all(tile != "🟦" for row in world for tile in row)
     assert all(tile != "⬜" for row in world for tile in row)
 
+    grass_count = sum(tile == "🟩" for row in world for tile in row)
+    forest_count = sum(tile == "🟢" for row in world for tile in row)
+    sand_count = sum(tile == "🟨" for row in world for tile in row)
+    soil_count = sum(tile == "🟫" for row in world for tile in row)
+    rock_count = sum(tile == "⬛" for row in world for tile in row)
+    assert soil_count > grass_count
+    assert soil_count > forest_count
+    assert grass_count > 0
+    assert forest_count > 0
+    assert sand_count == 0
+    assert rock_count == 0
+    assert _largest_cluster_size(world, "🟢") >= 50
+    assert _largest_cluster_size(world, "🟩") >= 50
+
     assert player["tile"] == "🙂"
     assert 0 <= player["x"] < WORLD_WIDTH
     assert 0 <= player["y"] < WORLD_HEIGHT
@@ -87,7 +109,8 @@ def test_generate_map_response_shape_and_tiles() -> None:
 
     assert viewport == {"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT}
 
-    village_clusters = _find_clusters(world, catalog.village)
+    settlement_tiles = {catalog.village, *catalog.buildings}
+    village_clusters = _find_clusters(world, settlement_tiles)
     assert 4 <= len(village_clusters) <= MAX_VILLAGES
     assert all(100 <= len(cluster) <= 400 for cluster in village_clusters)
     building_positions = [

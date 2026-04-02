@@ -65,12 +65,11 @@ def load_tile_catalog(asset_path: Path = ASSET_PATH) -> TileCatalog:
     lookup = {tile: tile for tile in ground_tiles}
 
     required = {
+        "forest": "🟢",
         "road": "🟥",
         "village": "🟪",
         "grass": "🟩",
-        "sand": "🟨",
         "soil": "🟫",
-        "rock": "⬛",
     }
     missing = [name for name, tile in required.items() if tile not in lookup]
     if missing:
@@ -82,7 +81,7 @@ def load_tile_catalog(asset_path: Path = ASSET_PATH) -> TileCatalog:
         buildings=tuple(building_tiles),
         road=lookup["🟥"],
         village=lookup["🟪"],
-        habitable=frozenset((lookup["🟩"], lookup["🟨"], lookup["🟫"])),
+        habitable=frozenset(tile for tile in (lookup["🟩"], lookup.get("🟨"), lookup["🟫"]) if tile is not None),
         blocked=frozenset(tile for tile in (lookup.get("🟦"),) if tile is not None),
-        rough=frozenset(tile for tile in (lookup["⬛"], lookup.get("⬜")) if tile is not None),
+        rough=frozenset(tile for tile in (lookup.get("⬛"), lookup.get("⬜")) if tile is not None),
     )

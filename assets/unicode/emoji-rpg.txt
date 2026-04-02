@@ -5,12 +5,12 @@
 U+1F642 ; 1.0 # 🙂 slightly smiling face
 
 # Ground
+U+1F7E2 ; 12.0 # 🟢 forest
+
 U+1F7E5 ; 12.0 # 🟥 road
-U+1F7E8 ; 12.0 # 🟨 sand
 U+1F7E9 ; 12.0 # 🟩 grass
 U+1F7EA ; 12.0 # 🟪 village
 U+1F7EB ; 12.0 # 🟫 soil
-U+2B1B ; 0.6 # ⬛ rock
 
 # Trees
 U+1F332 ; 1.0 # 🌲 evergreen tree

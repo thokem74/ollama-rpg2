@@ -18,6 +18,8 @@ MIN_VILLAGE_SIZE = 10
 MAX_VILLAGE_SIZE = 20
 BUILDING_MIN_GAP = 3
 BUILDING_DENSITY = 0.035
+MIN_TERRAIN_SPOT_SIZE = 10
+MAX_TERRAIN_SPOT_SIZE = 30
 
 
 @dataclass(frozen=True)
@@ -41,40 +43,8 @@ class Village:
     height: int
 
 
-def _lerp(a: float, b: float, t: float) -> float:
-    return a + (b - a) * t
-
-
-def _value_noise(x: float, y: float, seed: int, step: int, salt: int) -> float:
-    x0 = int(x // step)
-    y0 = int(y // step)
-    tx = (x % step) / step
-    ty = (y % step) / step
-
-    def corner(cx: int, cy: int) -> float:
-        corner_seed = ((cx * 73856093) ^ (cy * 19349663) ^ seed ^ salt) & 0xFFFFFFFF
-        corner_rng = Random(corner_seed)
-        return corner_rng.random()
-
-    c00 = corner(x0, y0)
-    c10 = corner(x0 + 1, y0)
-    c01 = corner(x0, y0 + 1)
-    c11 = corner(x0 + 1, y0 + 1)
-
-    top = _lerp(c00, c10, tx)
-    bottom = _lerp(c01, c11, tx)
-    return _lerp(top, bottom, ty)
-
-
-def _blended_noise(x: int, y: int, seed: int) -> float:
-    large = _value_noise(x, y, seed, step=32, salt=101)
-    medium = _value_noise(x + 11, y + 17, seed, step=16, salt=211)
-    detail = _value_noise(x + 23, y + 29, seed, step=8, salt=307)
-    return (large * 0.55) + (medium * 0.3) + (detail * 0.15)
-
-
 def _build_ground_lookup(ground_tiles: tuple[str, ...]) -> dict[str, str]:
-    ordered = ("🟨", "🟩", "🟫", "⬛")
+    ordered = ("🟢", "🟨", "🟩", "🟫", "⬛")
     lookup = {tile: tile for tile in ground_tiles}
     mapped = {tile: lookup[tile] for tile in ordered if tile in lookup}
     if len(mapped) != len(ground_tiles):
@@ -83,17 +53,95 @@ def _build_ground_lookup(ground_tiles: tuple[str, ...]) -> dict[str, str]:
     return mapped
 
 
-def _pick_tile(value: float, ground_tiles: tuple[str, ...]) -> str:
-    lookup = _build_ground_lookup(ground_tiles)
-    thresholds = (
-        (0.14, lookup.get("⬛", ground_tiles[0])),
-        (0.36, lookup.get("🟨", ground_tiles[0])),
-        (0.73, lookup.get("🟫", ground_tiles[0])),
+def _terrain_palette(catalog: TileCatalog) -> tuple[str, str, str]:
+    lookup = _build_ground_lookup(catalog.ground)
+    return (
+        lookup["🟩"],
+        lookup["🟫"],
+        lookup["🟢"],
     )
-    for threshold, tile in thresholds:
-        if value < threshold:
-            return tile
-    return lookup.get("🟩", ground_tiles[-1])
+
+
+def _stamp_terrain_spot(
+    world: list[list[str]],
+    center_x: int,
+    center_y: int,
+    width: int,
+    height: int,
+    tile: str,
+    rng: Random,
+) -> None:
+    half_width = width // 2
+    half_height = height // 2
+    left = max(0, center_x - half_width)
+    right = min(WORLD_WIDTH - 1, center_x + width - half_width - 1)
+    top = max(0, center_y - half_height)
+    bottom = min(WORLD_HEIGHT - 1, center_y + height - half_height - 1)
+
+    for y in range(top, bottom + 1):
+        for x in range(left, right + 1):
+            # Keep spots soft-edged rather than perfectly rectangular.
+            edge_bias = (
+                x in (left, right)
+                or y in (top, bottom)
+                or x in (left + 1, right - 1)
+                or y in (top + 1, bottom - 1)
+            )
+            if edge_bias and rng.random() < 0.22:
+                continue
+            world[y][x] = tile
+
+
+def _spot_bounds(center_x: int, center_y: int, width: int, height: int) -> tuple[int, int, int, int]:
+    half_width = width // 2
+    half_height = height // 2
+    return (
+        max(0, center_x - half_width),
+        min(WORLD_WIDTH - 1, center_x + width - half_width - 1),
+        max(0, center_y - half_height),
+        min(WORLD_HEIGHT - 1, center_y + height - half_height - 1),
+    )
+
+
+def _spot_overlaps_existing(
+    occupied: list[tuple[int, int, int, int]], candidate: tuple[int, int, int, int]
+) -> bool:
+    left, right, top, bottom = candidate
+    return any(
+        not (right < other_left or other_right < left or bottom < other_top or other_bottom < top)
+        for other_left, other_right, other_top, other_bottom in occupied
+    )
+
+
+def _generate_base_world(catalog: TileCatalog, rng: Random) -> list[list[str]]:
+    grass_tile, soil_tile, forest_tile = _terrain_palette(catalog)
+    world = [[soil_tile for _ in range(WORLD_WIDTH)] for _ in range(WORLD_HEIGHT)]
+
+    spot_plan = (
+        (grass_tile, rng.randint(4, 6)),
+        (forest_tile, rng.randint(4, 6)),
+    )
+    occupied_spots: list[tuple[int, int, int, int]] = []
+    for tile, count in spot_plan:
+        placed = 0
+        attempts = 0
+        while placed < count and attempts < 200:
+            width = rng.randint(MIN_TERRAIN_SPOT_SIZE, MAX_TERRAIN_SPOT_SIZE)
+            height = rng.randint(MIN_TERRAIN_SPOT_SIZE, MAX_TERRAIN_SPOT_SIZE)
+            half_width = width // 2
+            half_height = height // 2
+            center_x = rng.randint(half_width, WORLD_WIDTH - (width - half_width))
+            center_y = rng.randint(half_height, WORLD_HEIGHT - (height - half_height))
+            bounds = _spot_bounds(center_x, center_y, width, height)
+            if _spot_overlaps_existing(occupied_spots, bounds):
+                attempts += 1
+                continue
+            _stamp_terrain_spot(world, center_x, center_y, width, height, tile, rng)
+            occupied_spots.append(bounds)
+            placed += 1
+            attempts += 1
+
+    return world
 
 
 def _in_bounds(x: int, y: int) -> bool:
@@ -370,14 +418,7 @@ def _find_spawn(world: list[list[str]], player_tile: str, catalog: TileCatalog) 
 def generate_map(catalog: TileCatalog) -> GeneratedMap:
     seed = Random().randint(0, 2**31 - 1)
     rng = Random(seed)
-    world: list[list[str]] = []
-
-    for y in range(WORLD_HEIGHT):
-        row: list[str] = []
-        for x in range(WORLD_WIDTH):
-            noise_value = _blended_noise(x, y, seed)
-            row.append(_pick_tile(noise_value, catalog.ground))
-        world.append(row)
+    world = _generate_base_world(catalog, rng)
 
     villages = _select_village_centers(world, catalog, rng)
     for village in villages:
