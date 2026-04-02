@@ -11,6 +11,7 @@ const state = {
 };
 
 const tileSize = 48;
+const terrainTiles = new Set(["🟥", "🟨", "🟩", "🟦", "🟫", "⬛", "⬜"]);
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -63,21 +64,32 @@ function drawViewport() {
   context.fillRect(0, 0, canvas.width, canvas.height);
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.font = "34px 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif";
 
   for (let row = 0; row < state.viewport.height; row += 1) {
     for (let col = 0; col < state.viewport.width; col += 1) {
       const worldX = camera.left + col;
       const worldY = camera.top + row;
       const tile = state.world[worldY][worldX];
+      const cellX = col * tileSize;
+      const cellY = row * tileSize;
       const centerX = col * tileSize + tileSize / 2;
       const centerY = row * tileSize + tileSize / 2;
 
-      context.fillStyle = row % 2 === col % 2 ? "#ffffff" : "#fbfbf2";
-      context.fillRect(col * tileSize, row * tileSize, tileSize, tileSize);
+      if (terrainTiles.has(tile)) {
+        context.save();
+        context.beginPath();
+        context.rect(cellX, cellY, tileSize, tileSize);
+        context.clip();
+        context.font = "54px 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif";
+        context.fillText(tile, centerX, centerY + 1);
+        context.restore();
+      } else {
+        context.font = "34px 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif";
+        context.fillText(tile, centerX, centerY + 2);
+      }
 
-      context.fillText(tile, centerX, centerY + 2);
       if (state.player.x === worldX && state.player.y === worldY) {
+        context.font = "34px 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif";
         context.fillText(state.player.tile, centerX, centerY + 2);
       }
     }
