@@ -6,7 +6,14 @@ const resetButton = document.getElementById("reset-button");
 const statusLabel = document.getElementById("status");
 const playerPosition = document.getElementById("player-position");
 const historyWindow = document.getElementById("history-window");
-const STORAGE_KEY = "ollama-rpg2:map-state:v2";
+const chatTitle = document.getElementById("chat-title");
+const chatDescription = document.getElementById("chat-description");
+const chatWindow = document.getElementById("chat-window");
+const chatForm = document.getElementById("chat-form");
+const chatInput = document.getElementById("chat-input");
+const chatSendButton = document.getElementById("chat-send-button");
+const STORAGE_KEY = "ollama-rpg2:map-state:v3";
+const MAX_CHAT_MESSAGES = 12;
 
 const state = {
   world: [],
@@ -27,9 +34,14 @@ const state = {
   discoveredNpcIds: new Set(),
   currentVillageId: null,
   adjacentNpcIds: new Set(),
+  activeNpcId: null,
+  chatDraft: "",
+  npcChats: {},
+  focusTarget: "map",
   busy: {
     map: false,
     lore: false,
+    chat: false,
   },
 };
 
@@ -141,6 +153,28 @@ function isValidHistoryEntries(entries) {
   );
 }
 
+function isValidTranscriptEntry(entry) {
+  return (
+    Array.isArray(entry) &&
+    entry.length === 2 &&
+    ["u", "n"].includes(entry[0]) &&
+    typeof entry[1] === "string"
+  );
+}
+
+function isValidNpcChats(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  return Object.entries(value).every(
+    ([npcId, transcript]) =>
+      typeof npcId === "string" &&
+      Array.isArray(transcript) &&
+      transcript.every((entry) => isValidTranscriptEntry(entry))
+  );
+}
+
 function isValidLoreEntity(entity) {
   return (
     entity &&
@@ -187,7 +221,10 @@ function canRestoreState(payload) {
     isStringArray(payload.discoveredVillageIds) &&
     isStringArray(payload.discoveredNpcIds) &&
     (payload.currentVillageId === null || typeof payload.currentVillageId === "string") &&
-    isStringArray(payload.adjacentNpcIds)
+    isStringArray(payload.adjacentNpcIds) &&
+    (payload.activeNpcId === null || typeof payload.activeNpcId === "string") &&
+    typeof payload.chatDraft === "string" &&
+    isValidNpcChats(payload.npcChats)
   );
 }
 
@@ -204,6 +241,9 @@ function applyPayload(payload) {
   state.discoveredNpcIds = new Set(payload.discoveredNpcIds ?? []);
   state.currentVillageId = payload.currentVillageId ?? null;
   state.adjacentNpcIds = new Set(payload.adjacentNpcIds ?? []);
+  state.activeNpcId = payload.activeNpcId ?? null;
+  state.chatDraft = payload.chatDraft ?? "";
+  state.npcChats = payload.npcChats ?? {};
 }
 
 function snapshotState() {
@@ -220,6 +260,9 @@ function snapshotState() {
     discoveredNpcIds: Array.from(state.discoveredNpcIds),
     currentVillageId: state.currentVillageId,
     adjacentNpcIds: Array.from(state.adjacentNpcIds),
+    activeNpcId: state.activeNpcId,
+    chatDraft: state.chatDraft,
+    npcChats: state.npcChats,
   };
 }
 
@@ -257,6 +300,8 @@ function updateActionButtons() {
   generateButton.disabled = busy;
   generateLoreButton.disabled = busy || !hasWorld();
   resetButton.disabled = busy;
+  chatSendButton.disabled = state.busy.chat || !state.activeNpcId || !state.lore;
+  chatInput.disabled = state.busy.chat || !state.activeNpcId || !state.lore;
 }
 
 function restoreSavedState() {
@@ -314,6 +359,152 @@ function updatePlayerLabel() {
   }
 
   playerPosition.textContent = `Player: ${state.player.x}, ${state.player.y}`;
+}
+
+function isTypingTarget(target) {
+  return target === chatInput || target?.closest?.("#chat-form");
+}
+
+function getLoreNpcById(npcId) {
+  if (!state.lore || !npcId) {
+    return null;
+  }
+
+  return state.lore.npcs.find((npc) => npc.id === npcId) ?? null;
+}
+
+function trimTranscript(transcript) {
+  return transcript
+    .filter((entry) => isValidTranscriptEntry(entry) && entry[1].trim())
+    .map(([speaker, text]) => [speaker, text.trim()])
+    .slice(-MAX_CHAT_MESSAGES);
+}
+
+function getNpcTranscript(npcId) {
+  if (!npcId) {
+    return [];
+  }
+
+  return trimTranscript(state.npcChats[npcId] ?? []);
+}
+
+function setNpcTranscript(npcId, transcript) {
+  if (!npcId) {
+    return;
+  }
+
+  state.npcChats[npcId] = trimTranscript(transcript);
+}
+
+function appendNpcTranscriptEntry(npcId, speaker, text) {
+  if (!npcId || !text.trim()) {
+    return;
+  }
+
+  const transcript = getNpcTranscript(npcId);
+  transcript.push([speaker, text.trim()]);
+  setNpcTranscript(npcId, transcript);
+}
+
+function setMapFocus() {
+  state.focusTarget = "map";
+  canvas.focus();
+}
+
+function setChatFocus() {
+  state.focusTarget = "chat";
+  chatInput.focus();
+}
+
+function clearChatDraftAndFocusMap() {
+  state.chatDraft = "";
+  chatInput.value = "";
+  saveState();
+  setMapFocus();
+}
+
+function renderChatPanel() {
+  const npc = getLoreNpcById(state.activeNpcId);
+  chatWindow.replaceChildren();
+
+  if (!npc) {
+    chatTitle.textContent = "No conversation";
+    chatDescription.textContent = "Walk next to an NPC, generate lore, then press E to talk.";
+    chatInput.value = state.chatDraft;
+    const empty = document.createElement("p");
+    empty.className = "chat-empty";
+    empty.textContent = "No NPC selected.";
+    chatWindow.append(empty);
+    updateActionButtons();
+    return;
+  }
+
+  chatTitle.textContent = npc.name;
+  chatDescription.textContent = npc.description;
+  chatInput.value = state.chatDraft;
+
+  const transcript = getNpcTranscript(npc.id);
+  if (transcript.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "chat-empty";
+    empty.textContent = "Say hello to start the conversation.";
+    chatWindow.append(empty);
+  } else {
+    for (const [speaker, text] of transcript) {
+      const line = document.createElement("p");
+      line.className = "chat-message";
+      const label = document.createElement("strong");
+      label.textContent = `${speaker === "u" ? "You" : npc.name}: `;
+      line.append(label, document.createTextNode(text));
+      chatWindow.append(line);
+    }
+  }
+
+  chatWindow.scrollTop = chatWindow.scrollHeight;
+  updateActionButtons();
+}
+
+function clearActiveChat() {
+  state.activeNpcId = null;
+  state.chatDraft = "";
+  renderChatPanel();
+}
+
+function reconcileChatState() {
+  if (!state.lore || !state.activeNpcId) {
+    state.activeNpcId = null;
+    state.chatDraft = "";
+    return;
+  }
+
+  const activeNpc = getLoreNpcById(state.activeNpcId);
+  if (!activeNpc || !state.adjacentNpcIds.has(state.activeNpcId)) {
+    state.activeNpcId = null;
+    state.chatDraft = "";
+  }
+}
+
+function chooseAdjacentNpc() {
+  if (!state.lore || !state.player) {
+    return null;
+  }
+
+  const priorities = {
+    "0,-1": 0,
+    "1,0": 1,
+    "0,1": 2,
+    "-1,0": 3,
+  };
+
+  const candidates = state.lore.npcs
+    .filter((npc) => Math.abs(npc.x - state.player.x) + Math.abs(npc.y - state.player.y) === 1)
+    .map((npc) => ({
+      npc,
+      priority: priorities[`${npc.x - state.player.x},${npc.y - state.player.y}`] ?? 99,
+    }))
+    .sort((left, right) => left.priority - right.priority || left.npc.id.localeCompare(right.npc.id));
+
+  return candidates[0]?.npc ?? null;
 }
 
 function collidesWithNpc(x, y) {
@@ -391,11 +582,15 @@ function clearLoreState() {
   state.discoveredNpcIds = new Set();
   state.currentVillageId = null;
   state.adjacentNpcIds = new Set();
+  state.activeNpcId = null;
+  state.chatDraft = "";
+  state.npcChats = {};
 }
 
 function initializePresenceState() {
   state.currentVillageId = currentVillageAtPlayer();
   state.adjacentNpcIds = currentAdjacentNpcIds();
+  reconcileChatState();
 }
 
 function resetRuntimeState() {
@@ -411,6 +606,7 @@ function resetRuntimeState() {
     },
   };
   state.viewport = { width: 30, height: 22 };
+  state.focusTarget = "map";
   clearLoreState();
 }
 
@@ -587,8 +783,10 @@ async function generateMap() {
     saveState();
     updatePlayerLabel();
     renderHistory();
+    renderChatPanel();
     drawViewport();
     updateStatus("World ready. Use WASD to move.");
+    setMapFocus();
   } catch (error) {
     console.error(error);
     updateStatus("Could not generate the map.");
@@ -625,8 +823,12 @@ async function generateLore() {
     ];
     state.discoveredVillageIds = new Set();
     state.discoveredNpcIds = new Set();
+    state.activeNpcId = null;
+    state.chatDraft = "";
+    state.npcChats = {};
     initializePresenceState();
     renderHistory();
+    renderChatPanel();
     saveState();
     updateStatus("Lore recorded. Explore the world.");
   } catch (error) {
@@ -649,6 +851,7 @@ function resetGame() {
   resetRuntimeState();
   updatePlayerLabel();
   renderHistory();
+  renderChatPanel();
   drawViewport();
   updateStatus("Ready to generate a world.");
   updateActionButtons();
@@ -676,10 +879,91 @@ function movePlayer(dx, dy) {
   state.player.y = nextY;
   processVillageDiscovery();
   processNpcDiscovery();
+  reconcileChatState();
   saveState();
   updatePlayerLabel();
+  renderChatPanel();
   drawViewport();
   updateStatus("World ready. Use WASD to move.");
+}
+
+async function sendChatLine() {
+  const npc = getLoreNpcById(state.activeNpcId);
+  const playerLine = chatInput.value.trim();
+
+  if (!npc) {
+    updateStatus("Press E next to an NPC to start a conversation.");
+    return;
+  }
+
+  if (!state.lore) {
+    updateStatus("Generate lore before talking to NPCs.");
+    return;
+  }
+
+  if (!playerLine) {
+    return;
+  }
+
+  setBusyFlag("chat", true);
+  state.chatDraft = "";
+  chatInput.value = "";
+  appendNpcTranscriptEntry(npc.id, "u", playerLine);
+  renderChatPanel();
+  saveState();
+  updateStatus(`Listening to ${npc.name}...`);
+
+  try {
+    const response = await fetch("/api/npc/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        npcId: npc.id,
+        playerLine,
+        worldLore: state.lore.worldLore,
+        npc: {
+          id: npc.id,
+          name: npc.name,
+          description: npc.description,
+        },
+        transcript: getNpcTranscript(npc.id),
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`NPC chat failed with ${response.status}`);
+    }
+
+    const payload = await response.json();
+    appendNpcTranscriptEntry(npc.id, "n", payload.reply ?? "");
+    renderChatPanel();
+    saveState();
+    updateStatus(`${npc.name} replies.`);
+    setChatFocus();
+  } catch (error) {
+    console.error(error);
+    updateStatus("Could not reach this NPC right now.");
+  } finally {
+    setBusyFlag("chat", false);
+  }
+}
+
+function openAdjacentNpcChat() {
+  if (!state.lore) {
+    updateStatus("Generate lore before talking to NPCs.");
+    return;
+  }
+
+  const npc = chooseAdjacentNpc();
+  if (!npc) {
+    updateStatus("Move next to an NPC to talk.");
+    return;
+  }
+
+  state.activeNpcId = npc.id;
+  renderChatPanel();
+  saveState();
+  setChatFocus();
+  updateStatus(`Speaking with ${npc.name}.`);
 }
 
 generateButton.addEventListener("click", () => {
@@ -694,9 +978,36 @@ resetButton.addEventListener("click", () => {
   resetGame();
 });
 
+chatForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  sendChatLine();
+});
+
+chatInput.addEventListener("input", () => {
+  state.chatDraft = chatInput.value;
+  saveState();
+});
+
+chatInput.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    clearChatDraftAndFocusMap();
+    return;
+  }
+
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    sendChatLine();
+  }
+});
+
 window.addEventListener("keydown", (event) => {
+  if (isTypingTarget(event.target)) {
+    return;
+  }
+
   const key = event.key.toLowerCase();
-  if (["w", "a", "s", "d"].includes(key)) {
+  if (["w", "a", "s", "d", "e"].includes(key)) {
     event.preventDefault();
   }
 
@@ -708,6 +1019,8 @@ window.addEventListener("keydown", (event) => {
     movePlayer(-1, 0);
   } else if (key === "d") {
     movePlayer(1, 0);
+  } else if (key === "e") {
+    openAdjacentNpcChat();
   }
 });
 
@@ -715,11 +1028,14 @@ if (restoreSavedState()) {
   initializePresenceState();
   updatePlayerLabel();
   renderHistory();
+  renderChatPanel();
   drawViewport();
   updateStatus("Restored saved world. Use WASD to move.");
+  setMapFocus();
 } else {
   updatePlayerLabel();
   renderHistory();
+  renderChatPanel();
 }
 
 drawViewport();

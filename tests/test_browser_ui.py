@@ -60,9 +60,34 @@ HTML_SHELL = """
             id="map-canvas"
             width="1020"
             height="748"
+            tabindex="0"
             aria-label="Generated map viewport"
           ></canvas>
         </section>
+
+        <aside class="chat-panel">
+          <div class="chat-header">
+            <div>
+              <p class="eyebrow">Village Voices</p>
+              <h2 id="chat-title">No conversation</h2>
+            </div>
+          </div>
+          <p id="chat-description" class="chat-description">
+            Walk next to an NPC, generate lore, then press E to talk.
+          </p>
+          <div id="chat-window" class="chat-window" aria-live="polite">
+            <p class="chat-empty">No NPC selected.</p>
+          </div>
+          <form id="chat-form" class="chat-form">
+            <label class="sr-only" for="chat-input">Your line</label>
+            <textarea
+              id="chat-input"
+              rows="4"
+              placeholder="Type what you want to say, then press Enter."
+            ></textarea>
+            <button id="chat-send-button" type="submit">Send line</button>
+          </form>
+        </aside>
       </section>
     </main>
     <script type="module" src="/static/app.js"></script>
@@ -122,6 +147,7 @@ MOCK_LORE_PAYLOAD = {
         }
     ],
 }
+MOCK_NPC_CHAT_PAYLOAD = {"reply": "Bring me two blossoms and I will help however I can."}
 
 
 def _install_app_routes(page, request_log: list[str]) -> None:
@@ -150,6 +176,13 @@ def _install_app_routes(page, request_log: list[str]) -> None:
                 status=200,
                 content_type="application/json",
                 body=json.dumps(MOCK_LORE_PAYLOAD, ensure_ascii=False),
+            )
+        elif url == "http://ui.test/api/npc/chat":
+            request_log.append(url)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(MOCK_NPC_CHAT_PAYLOAD, ensure_ascii=False),
             )
         else:
             route.fulfill(status=404, body="not found")
@@ -259,6 +292,104 @@ def test_browser_generates_lore_tracks_history_and_persists_after_reload() -> No
         browser.close()
 
 
+def test_browser_npc_chat_focus_and_persistence() -> None:
+    with sync_playwright() as playwright:
+        browser = _launch_browser(playwright)
+        page = browser.new_page()
+        request_log: list[str] = []
+        _install_app_routes(page, request_log)
+        page.goto("http://ui.test/", wait_until="load")
+
+        page.locator("#generate-button").click()
+        page.wait_for_function(
+            """
+            () => document.querySelector("#status")?.textContent ===
+              "World ready. Use WASD to move."
+            """
+        )
+        page.locator("#generate-lore-button").click()
+        page.wait_for_function(
+            """
+            () => document.querySelector("#status")?.textContent ===
+              "Lore recorded. Explore the world."
+            """
+        )
+
+        page.keyboard.press("d")
+        page.wait_for_function("""() => document.querySelector("#player-position")?.textContent === "Player: 9, 10" """)
+        page.keyboard.press("d")
+        page.wait_for_function("""() => document.querySelector("#player-position")?.textContent === "Player: 10, 10" """)
+
+        page.keyboard.press("e")
+        page.wait_for_function("""() => document.activeElement?.id === "chat-input" """)
+        assert page.locator("#chat-title").text_content() == "Mira Fen"
+        assert (
+            page.locator("#chat-description").text_content()
+            == MOCK_LORE_PAYLOAD["npcs"][0]["description"]
+        )
+
+        page.locator("#chat-input").fill("how can i help you")
+        page.keyboard.press("w")
+        assert page.locator("#player-position").text_content() == "Player: 10, 10"
+
+        page.keyboard.press("Enter")
+        page.wait_for_function("""() => document.querySelectorAll("#chat-window .chat-message").length === 2""")
+        assert page.locator("#chat-window .chat-message").nth(0).text_content() == "You: how can i help you"
+        assert (
+            page.locator("#chat-window .chat-message").nth(1).text_content()
+            == f"Mira Fen: {MOCK_NPC_CHAT_PAYLOAD['reply']}"
+        )
+
+        page.locator("#chat-input").fill("temporary draft")
+        page.keyboard.press("Escape")
+        page.wait_for_function("""() => document.activeElement?.id === "map-canvas" """)
+        assert page.locator("#chat-input").input_value() == ""
+
+        page.reload(wait_until="load")
+        page.wait_for_function(
+            """
+            () => document.querySelector("#status")?.textContent ===
+              "Restored saved world. Use WASD to move."
+            """
+        )
+        assert page.locator("#chat-window .chat-message").count() == 2
+        page.keyboard.press("e")
+        page.wait_for_function("""() => document.activeElement?.id === "chat-input" """)
+        assert "http://ui.test/api/npc/chat" in request_log
+
+        browser.close()
+
+
+def test_browser_requires_lore_before_opening_npc_chat() -> None:
+    with sync_playwright() as playwright:
+        browser = _launch_browser(playwright)
+        page = browser.new_page()
+        request_log: list[str] = []
+        _install_app_routes(page, request_log)
+        page.goto("http://ui.test/", wait_until="load")
+
+        page.locator("#generate-button").click()
+        page.wait_for_function(
+            """
+            () => document.querySelector("#status")?.textContent ===
+              "World ready. Use WASD to move."
+            """
+        )
+
+        page.keyboard.press("d")
+        page.wait_for_function("""() => document.querySelector("#player-position")?.textContent === "Player: 9, 10" """)
+        page.keyboard.press("d")
+        page.wait_for_function("""() => document.querySelector("#player-position")?.textContent === "Player: 10, 10" """)
+        page.keyboard.press("e")
+
+        assert page.locator("#status").text_content() == "Generate lore before talking to NPCs."
+        assert page.locator("#chat-title").text_content() == "No conversation"
+        assert page.locator("#chat-window .chat-empty").text_content() == "No NPC selected."
+        assert "http://ui.test/api/npc/chat" not in request_log
+
+        browser.close()
+
+
 def test_browser_ignores_invalid_saved_world() -> None:
     with sync_playwright() as playwright:
         browser = _launch_browser(playwright)
@@ -267,7 +398,7 @@ def test_browser_ignores_invalid_saved_world() -> None:
         _install_app_routes(page, request_log)
         page.add_init_script(
             """
-            window.localStorage.setItem("ollama-rpg2:map-state:v2", "{broken");
+            window.localStorage.setItem("ollama-rpg2:map-state:v3", "{broken");
             """
         )
         page.goto("http://ui.test/", wait_until="load")

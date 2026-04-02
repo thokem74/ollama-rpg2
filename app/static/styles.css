@@ -33,7 +33,8 @@ body {
 
 .hero,
 .viewport-panel,
-.history-panel {
+.history-panel,
+.chat-panel {
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: 24px;
@@ -109,13 +110,14 @@ button:disabled {
 
 .world-layout {
   display: grid;
-  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) minmax(280px, 340px);
   gap: 22px;
   align-items: start;
 }
 
 .history-panel,
-.viewport-panel {
+.viewport-panel,
+.chat-panel {
   padding: 22px;
 }
 
@@ -124,7 +126,9 @@ button:disabled {
 }
 
 .history-header p,
-.history-empty {
+.history-empty,
+.chat-empty,
+.chat-description {
   color: var(--muted);
 }
 
@@ -173,6 +177,74 @@ button:disabled {
   color: var(--muted);
 }
 
+.chat-header {
+  margin-bottom: 12px;
+}
+
+.chat-window {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 520px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding: 18px;
+  margin-top: 18px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(124, 167, 70, 0.2);
+}
+
+.chat-message {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.chat-message strong {
+  color: #bc6a2d;
+}
+
+.chat-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+#chat-input {
+  width: 100%;
+  resize: vertical;
+  border-radius: 18px;
+  border: 1px solid rgba(124, 167, 70, 0.26);
+  background: rgba(255, 255, 255, 0.9);
+  padding: 16px 18px;
+  font: inherit;
+  color: var(--ink);
+  min-height: 110px;
+}
+
+#chat-input:focus,
+#map-canvas:focus {
+  outline: 2px solid rgba(108, 160, 61, 0.55);
+  outline-offset: 3px;
+}
+
+#chat-send-button {
+  width: 100%;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 #map-canvas {
   display: block;
   width: 100%;
@@ -194,13 +266,15 @@ button:disabled {
 
   .hero,
   .viewport-panel,
-  .history-panel {
+  .history-panel,
+  .chat-panel {
     border-radius: 18px;
   }
 
   .hero,
   .viewport-panel,
-  .history-panel {
+  .history-panel,
+  .chat-panel {
     padding: 18px;
   }
 
@@ -209,6 +283,11 @@ button:disabled {
   }
 
   .history-window {
+    min-height: 260px;
+    max-height: 320px;
+  }
+
+  .chat-window {
     min-height: 260px;
     max-height: 320px;
   }

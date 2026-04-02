@@ -6,7 +6,7 @@ from fastapi import HTTPException
 import pytest
 
 from app.content import load_tile_catalog
-from app.main import LoreRequest, app, create_lore, create_map
+from app.main import NpcChatRequest, LoreRequest, app, create_lore, create_map, create_npc_chat
 from app.mapgen import (
     MIN_VILLAGE_SPACING,
     MAX_VILLAGES,
@@ -338,3 +338,141 @@ def test_app_routes_include_ui_and_generation_endpoint() -> None:
     assert ("GET", "/") in routes
     assert ("POST", "/api/map/generate") in routes
     assert ("POST", "/api/lore/generate") in routes
+    assert ("POST", "/api/npc/chat") in routes
+
+
+def test_npc_chat_endpoint_returns_reply_and_uses_npc_settings(monkeypatch) -> None:
+    captured: dict[str, str] = {}
+
+    def fake_call_ollama(base_url: str, model: str, prompt: str) -> str:
+        captured["base_url"] = base_url
+        captured["model"] = model
+        captured["prompt"] = prompt
+        return json.dumps({"reply": "I can spare a little help, traveler."}, ensure_ascii=False)
+
+    monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_NPC_MODEL", "npc-model")
+    monkeypatch.setenv("OLLAMA_NPC_MAX_WORDS", "7")
+
+    response = asyncio.run(
+        create_npc_chat(
+            NpcChatRequest.model_validate(
+                {
+                    "npcId": "npc:4:1",
+                    "playerLine": "Can you help me?",
+                    "worldLore": "A soft frontier links gardens, paths, and hill villages.",
+                    "npc": {
+                        "id": "npc:4:1",
+                        "name": "Tobin",
+                        "description": "A village tender who worries over the market flowers.",
+                    },
+                    "transcript": [["u", "Hello there"], ["n", "Welcome, traveler."]],
+                }
+            )
+        )
+    )
+
+    payload = json.loads(response.body)
+    assert payload == {"reply": "I can spare a little help, traveler."}
+    assert captured["base_url"] == "http://ollama.test"
+    assert captured["model"] == "npc-model"
+    assert '"maxWords": 7' in captured["prompt"]
+    assert '"name": "Tobin"' in captured["prompt"]
+
+
+def test_npc_chat_endpoint_rejects_malformed_ollama_output(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.lore._call_ollama",
+        lambda base_url, model, prompt: "not valid json at all",
+    )
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_NPC_MODEL", "npc-model")
+    monkeypatch.setenv("OLLAMA_NPC_MAX_WORDS", "12")
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            create_npc_chat(
+                NpcChatRequest.model_validate(
+                    {
+                        "npcId": "npc:3:1",
+                        "playerLine": "Hello",
+                        "worldLore": "A bright road crosses the frontier.",
+                        "npc": {
+                            "id": "npc:3:1",
+                            "name": "Edda Pike",
+                            "description": "A patient guide who knows the valley.",
+                        },
+                        "transcript": [],
+                    }
+                )
+            )
+        )
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "Ollama returned invalid JSON lore."
+
+
+def test_npc_chat_endpoint_enforces_max_words(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.lore._call_ollama",
+        lambda base_url, model, prompt: json.dumps(
+            {
+                "reply": "one two three four five six seven eight nine",
+            },
+            ensure_ascii=False,
+        ),
+    )
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_NPC_MODEL", "npc-model")
+    monkeypatch.setenv("OLLAMA_NPC_MAX_WORDS", "5")
+
+    response = asyncio.run(
+        create_npc_chat(
+            NpcChatRequest.model_validate(
+                {
+                    "npcId": "npc:7:4",
+                    "playerLine": "Tell me more.",
+                    "worldLore": "The roads are full of rumor and trade.",
+                    "npc": {
+                        "id": "npc:7:4",
+                        "name": "Mira Fen",
+                        "description": "A cheerful courier with news to spare.",
+                    },
+                    "transcript": [["u", "Hello"]],
+                }
+            )
+        )
+    )
+
+    payload = json.loads(response.body)
+    assert payload == {"reply": "one two three four five"}
+
+
+def test_npc_chat_endpoint_requires_npc_settings(monkeypatch) -> None:
+    monkeypatch.delenv("OLLAMA_NPC_MODEL", raising=False)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_NPC_MAX_WORDS", "5")
+    monkeypatch.setattr("app.lore.ENV_FILES", ())
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            create_npc_chat(
+                NpcChatRequest.model_validate(
+                    {
+                        "npcId": "npc:9:2",
+                        "playerLine": "Hi",
+                        "worldLore": "A quiet map waits beyond the road.",
+                        "npc": {
+                            "id": "npc:9:2",
+                            "name": "Nell",
+                            "description": "A watchful local.",
+                        },
+                        "transcript": [],
+                    }
+                )
+            )
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "Missing required setting: OLLAMA_NPC_MODEL"

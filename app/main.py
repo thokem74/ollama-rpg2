@@ -9,7 +9,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.content import load_tile_catalog
-from app.lore import generate_lore_payload, serialize_generated_villages, validate_world_shape
+from app.lore import (
+    generate_lore_payload,
+    generate_npc_chat_reply,
+    serialize_generated_villages,
+    validate_world_shape,
+)
 from app.mapgen import VIEWPORT_HEIGHT, VIEWPORT_WIDTH, generate_map
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -31,6 +36,20 @@ class LoreNpcRequest(BaseModel):
 class LoreRequest(BaseModel):
     world: list[list[str]]
     npcs: list[LoreNpcRequest]
+
+
+class NpcChatLoreNpc(BaseModel):
+    id: str
+    name: str
+    description: str
+
+
+class NpcChatRequest(BaseModel):
+    npcId: str
+    playerLine: str
+    worldLore: str
+    npc: NpcChatLoreNpc
+    transcript: list[list[str]]
 
 
 @app.get("/")
@@ -84,5 +103,26 @@ async def create_lore(request: LoreRequest) -> Response:
 
     return Response(
         content=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        media_type="application/json",
+    )
+
+
+@app.post("/api/npc/chat")
+async def create_npc_chat(request: NpcChatRequest) -> Response:
+    try:
+        reply = await generate_npc_chat_reply(
+            npc_id=request.npcId,
+            world_lore=request.worldLore,
+            npc=request.npc.model_dump(),
+            transcript=request.transcript,
+            player_line=request.playerLine,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return Response(
+        content=json.dumps({"reply": reply}, ensure_ascii=False, separators=(",", ":")),
         media_type="application/json",
     )
