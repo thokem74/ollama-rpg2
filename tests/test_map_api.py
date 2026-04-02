@@ -81,6 +81,7 @@ def test_generate_map_response_shape_and_tiles() -> None:
     world = payload["world"]
     player = payload["player"]
     npcs = payload["npcs"]
+    collision = payload["collision"]
     viewport = payload["viewport"]
     catalog = load_tile_catalog()
 
@@ -116,6 +117,13 @@ def test_generate_map_response_shape_and_tiles() -> None:
     assert world[player["y"]][player["x"]] != "🟦"
     assert npcs
     assert all(npc["tile"] in catalog.npcs for npc in npcs)
+    assert collision == {
+        "tiles": {
+            "trees": list(catalog.trees),
+            "plants": list(catalog.plants),
+            "buildings": list(catalog.buildings),
+        }
+    }
 
     assert viewport == {"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT}
 

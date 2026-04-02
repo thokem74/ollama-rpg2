@@ -8,6 +8,13 @@ const state = {
   world: [],
   player: null,
   npcs: [],
+  collision: {
+    tiles: {
+      trees: [],
+      plants: [],
+      buildings: [],
+    },
+  },
   viewport: { width: 30, height: 22 },
 };
 
@@ -45,6 +52,20 @@ function updatePlayerLabel() {
   }
 
   playerPosition.textContent = `Player: ${state.player.x}, ${state.player.y}`;
+}
+
+function collidesWithNpc(x, y) {
+  return state.npcs.some((npc) => npc.x === x && npc.y === y);
+}
+
+function collidesWithTile(x, y) {
+  const tile = state.world[y]?.[x];
+  const blockingTiles = new Set([
+    ...state.collision.tiles.trees,
+    ...state.collision.tiles.plants,
+    ...state.collision.tiles.buildings,
+  ]);
+  return blockingTiles.has(tile);
 }
 
 function resizeCanvas() {
@@ -110,6 +131,7 @@ async function generateMap() {
     state.world = payload.world;
     state.player = payload.player;
     state.npcs = payload.npcs ?? [];
+    state.collision = payload.collision ?? state.collision;
     state.viewport = payload.viewport;
     updatePlayerLabel();
     drawViewport();
@@ -129,10 +151,22 @@ function movePlayer(dx, dy) {
 
   const worldHeight = state.world.length;
   const worldWidth = state.world[0].length;
-  state.player.x = clamp(state.player.x + dx, 0, worldWidth - 1);
-  state.player.y = clamp(state.player.y + dy, 0, worldHeight - 1);
+  const nextX = clamp(state.player.x + dx, 0, worldWidth - 1);
+  const nextY = clamp(state.player.y + dy, 0, worldHeight - 1);
+
+  if (
+    (nextX !== state.player.x || nextY !== state.player.y) &&
+    (collidesWithNpc(nextX, nextY) || collidesWithTile(nextX, nextY))
+  ) {
+    updateStatus("Blocked by obstacle.");
+    return;
+  }
+
+  state.player.x = nextX;
+  state.player.y = nextY;
   updatePlayerLabel();
   drawViewport();
+  updateStatus("World ready. Use WASD to move.");
 }
 
 generateButton.addEventListener("click", () => {

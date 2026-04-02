@@ -54,8 +54,16 @@ HTML_SHELL = """
 """
 
 MOCK_WORLD = [["🟩" for _ in range(128)] for _ in range(128)]
+MOCK_WORLD[10][11] = "🌲"
 MOCK_PLAYER = {"x": 10, "y": 10, "tile": "🙂"}
-MOCK_NPCS = [{"x": 12, "y": 10, "tile": "🧑‍🦱"}]
+MOCK_NPCS = [{"x": 10, "y": 11, "tile": "🧑‍🦱"}]
+MOCK_COLLISION = {
+    "tiles": {
+        "trees": ["🌲"],
+        "plants": ["🌷"],
+        "buildings": ["🏠"],
+    }
+}
 
 
 def _parse_position(label: str) -> tuple[int, int]:
@@ -90,6 +98,7 @@ def test_browser_can_generate_map_and_move_player() -> None:
                             "world": MOCK_WORLD,
                             "player": MOCK_PLAYER,
                             "npcs": MOCK_NPCS,
+                            "collision": MOCK_COLLISION,
                             "viewport": {"width": 30, "height": 22},
                         },
                         ensure_ascii=False,
@@ -120,6 +129,26 @@ def test_browser_can_generate_map_and_move_player() -> None:
         page.keyboard.press("d")
         page.wait_for_function(
             """
+            () => document.querySelector("#status")?.textContent === "Blocked by obstacle."
+            """
+        )
+        blocked_tree_label = page.locator("#player-position").text_content()
+        assert blocked_tree_label is not None
+        assert _parse_position(blocked_tree_label) == (start_x, start_y)
+
+        page.keyboard.press("s")
+        page.wait_for_function(
+            """
+            () => document.querySelector("#status")?.textContent === "Blocked by obstacle."
+            """
+        )
+        blocked_npc_label = page.locator("#player-position").text_content()
+        assert blocked_npc_label is not None
+        assert _parse_position(blocked_npc_label) == (start_x, start_y)
+
+        page.keyboard.press("a")
+        page.wait_for_function(
+            """
             previous => document.querySelector("#player-position")?.textContent !== previous
             """,
             arg=player_label,
@@ -130,6 +159,7 @@ def test_browser_can_generate_map_and_move_player() -> None:
         end_x, end_y = _parse_position(moved_label)
 
         assert (start_x, start_y) == (MOCK_PLAYER["x"], MOCK_PLAYER["y"])
-        assert (end_x, end_y) == (MOCK_PLAYER["x"] + 1, MOCK_PLAYER["y"])
+        assert (end_x, end_y) == (MOCK_PLAYER["x"] - 1, MOCK_PLAYER["y"])
+        assert page.locator("#status").text_content() == "World ready. Use WASD to move."
 
         browser.close()
