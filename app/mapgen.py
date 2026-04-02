@@ -20,6 +20,8 @@ BUILDING_MIN_GAP = 3
 BUILDING_DENSITY = 0.035
 MIN_TERRAIN_SPOT_SIZE = 10
 MAX_TERRAIN_SPOT_SIZE = 30
+FOREST_TREE_DENSITY = 0.08
+GRASS_PLANT_DENSITY = 0.03
 
 
 @dataclass(frozen=True)
@@ -144,6 +146,15 @@ def _generate_base_world(catalog: TileCatalog, rng: Random) -> list[list[str]]:
     return world
 
 
+def _decorate_biomes(world: list[list[str]], catalog: TileCatalog, rng: Random) -> None:
+    for y, row in enumerate(world):
+        for x, tile in enumerate(row):
+            if tile == "🟢" and rng.random() < FOREST_TREE_DENSITY:
+                world[y][x] = rng.choice(catalog.trees)
+            elif tile == "🟩" and rng.random() < GRASS_PLANT_DENSITY:
+                world[y][x] = rng.choice(catalog.plants)
+
+
 def _in_bounds(x: int, y: int) -> bool:
     return 0 <= x < WORLD_WIDTH and 0 <= y < WORLD_HEIGHT
 
@@ -159,7 +170,7 @@ def _is_walkable(tile: str, catalog: TileCatalog) -> bool:
 
 
 def _is_habitable(tile: str, catalog: TileCatalog) -> bool:
-    return tile in catalog.habitable
+    return tile in catalog.habitable or tile in catalog.trees or tile in catalog.plants
 
 
 def _village_site_ok(
@@ -339,6 +350,10 @@ def _terrain_cost(tile: str, catalog: TileCatalog) -> int:
         return 2
     if tile in catalog.habitable:
         return 3
+    if tile in catalog.trees:
+        return 5
+    if tile in catalog.plants:
+        return 4
     if tile in catalog.rough:
         return 10
     return 6
@@ -419,6 +434,7 @@ def generate_map(catalog: TileCatalog) -> GeneratedMap:
     seed = Random().randint(0, 2**31 - 1)
     rng = Random(seed)
     world = _generate_base_world(catalog, rng)
+    _decorate_biomes(world, catalog, rng)
 
     villages = _select_village_centers(world, catalog, rng)
     for village in villages:

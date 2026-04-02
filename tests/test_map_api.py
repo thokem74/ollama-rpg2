@@ -62,6 +62,8 @@ def test_tile_catalog_loads_expected_sections() -> None:
 
     assert catalog.player == "🙂"
     assert {"🟢", "🟥", "🟩", "🟪", "🟫"}.issubset(set(catalog.ground))
+    assert len(catalog.trees) > 0
+    assert len(catalog.plants) > 0
     assert len(catalog.buildings) > 0
     assert catalog.road == "🟥"
     assert catalog.village == "🟪"
@@ -83,13 +85,15 @@ def test_generate_map_response_shape_and_tiles() -> None:
     assert len(world) == WORLD_HEIGHT
     assert all(len(row) == WORLD_WIDTH for row in world)
 
-    allowed_tiles = set(catalog.ground) | set(catalog.buildings)
+    allowed_tiles = set(catalog.ground) | set(catalog.trees) | set(catalog.plants) | set(catalog.buildings)
     assert all(tile in allowed_tiles for row in world for tile in row)
     assert all(tile != "🟦" for row in world for tile in row)
     assert all(tile != "⬜" for row in world for tile in row)
 
     grass_count = sum(tile == "🟩" for row in world for tile in row)
     forest_count = sum(tile == "🟢" for row in world for tile in row)
+    tree_count = sum(tile in catalog.trees for row in world for tile in row)
+    plant_count = sum(tile in catalog.plants for row in world for tile in row)
     sand_count = sum(tile == "🟨" for row in world for tile in row)
     soil_count = sum(tile == "🟫" for row in world for tile in row)
     rock_count = sum(tile == "⬛" for row in world for tile in row)
@@ -97,6 +101,8 @@ def test_generate_map_response_shape_and_tiles() -> None:
     assert soil_count > forest_count
     assert grass_count > 0
     assert forest_count > 0
+    assert tree_count > 0
+    assert plant_count > 0
     assert sand_count == 0
     assert rock_count == 0
     assert _largest_cluster_size(world, "🟢") >= 50
