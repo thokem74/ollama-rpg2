@@ -16,9 +16,8 @@ MAX_VILLAGES = 8
 MIN_VILLAGE_SPACING = 18
 MIN_VILLAGE_SIZE = 10
 MAX_VILLAGE_SIZE = 20
-BUILDING_MIN_GAP = 3
+FEATURE_MIN_GAP = 3
 BUILDING_DENSITY = 0.035
-NPC_MIN_GAP = 3
 NPC_DENSITY = 0.015
 MIN_TERRAIN_SPOT_SIZE = 10
 MAX_TERRAIN_SPOT_SIZE = 30
@@ -156,13 +155,26 @@ def _generate_base_world(catalog: TileCatalog, rng: Random) -> list[list[str]]:
     return world
 
 
-def _decorate_biomes(world: list[list[str]], catalog: TileCatalog, rng: Random) -> None:
+def _can_place_feature(x: int, y: int, occupied: list[tuple[int, int]]) -> bool:
+    return all(
+        max(abs(x - other_x), abs(y - other_y)) >= FEATURE_MIN_GAP
+        for other_x, other_y in occupied
+    )
+
+
+def _decorate_biomes(
+    world: list[list[str]], catalog: TileCatalog, rng: Random
+) -> list[tuple[int, int]]:
+    occupied: list[tuple[int, int]] = []
     for y, row in enumerate(world):
         for x, tile in enumerate(row):
-            if tile == "🟢" and rng.random() < FOREST_TREE_DENSITY:
+            if tile == "🟢" and rng.random() < FOREST_TREE_DENSITY and _can_place_feature(x, y, occupied):
                 world[y][x] = rng.choice(catalog.trees)
-            elif tile == "🟩" and rng.random() < GRASS_PLANT_DENSITY:
+                occupied.append((x, y))
+            elif tile == "🟩" and rng.random() < GRASS_PLANT_DENSITY and _can_place_feature(x, y, occupied):
                 world[y][x] = rng.choice(catalog.plants)
+                occupied.append((x, y))
+    return occupied
 
 
 def _in_bounds(x: int, y: int) -> bool:
@@ -247,17 +259,12 @@ def _stamp_village(world: list[list[str]], village: Village, catalog: TileCatalo
                 world[y][x] = catalog.village
 
 
-def _can_place_building(
-    x: int, y: int, placed: list[tuple[int, int]]
-) -> bool:
-    return all(
-        max(abs(x - other_x), abs(y - other_y)) >= BUILDING_MIN_GAP
-        for other_x, other_y in placed
-    )
-
-
 def _stamp_buildings(
-    world: list[list[str]], village: Village, catalog: TileCatalog, rng: Random
+    world: list[list[str]],
+    village: Village,
+    catalog: TileCatalog,
+    rng: Random,
+    occupied: list[tuple[int, int]],
 ) -> None:
     left, right, top, bottom = _village_bounds(village)
     candidates = [
@@ -269,21 +276,17 @@ def _stamp_buildings(
     rng.shuffle(candidates)
 
     target_count = max(1, int(village.width * village.height * BUILDING_DENSITY))
-    placed: list[tuple[int, int]] = []
+    village_occupied = list(occupied)
+    placed_in_village = 0
 
     for x, y in candidates:
-        if _can_place_building(x, y, placed):
+        if _can_place_feature(x, y, village_occupied):
             world[y][x] = rng.choice(catalog.buildings)
-            placed.append((x, y))
-            if len(placed) >= target_count:
+            village_occupied.append((x, y))
+            occupied.append((x, y))
+            placed_in_village += 1
+            if placed_in_village >= target_count:
                 break
-
-
-def _can_place_npc(x: int, y: int, occupied: list[tuple[int, int]]) -> bool:
-    return all(
-        max(abs(x - other_x), abs(y - other_y)) >= NPC_MIN_GAP
-        for other_x, other_y in occupied
-    )
 
 
 def _spawn_village_npcs(
@@ -292,9 +295,10 @@ def _spawn_village_npcs(
     player: PlayerSpawn,
     catalog: TileCatalog,
     rng: Random,
+    occupied: list[tuple[int, int]],
 ) -> list[NPCSpawn]:
     npcs: list[NPCSpawn] = []
-    occupied = [(player.x, player.y)]
+    npc_occupied = list(occupied)
 
     for village in villages:
         left, right, top, bottom = _village_bounds(village)
@@ -309,9 +313,9 @@ def _spawn_village_npcs(
         placed_in_village = 0
 
         for x, y in candidates:
-            if _can_place_npc(x, y, occupied):
+            if _can_place_feature(x, y, npc_occupied):
                 npcs.append(NPCSpawn(x=x, y=y, tile=rng.choice(catalog.npcs)))
-                occupied.append((x, y))
+                npc_occupied.append((x, y))
                 placed_in_village += 1
                 if placed_in_village >= target_count:
                     break
@@ -484,16 +488,22 @@ def generate_map(catalog: TileCatalog) -> GeneratedMap:
     seed = Random().randint(0, 2**31 - 1)
     rng = Random(seed)
     world = _generate_base_world(catalog, rng)
-    _decorate_biomes(world, catalog, rng)
+    occupied_features = _decorate_biomes(world, catalog, rng)
 
     villages = _select_village_centers(world, catalog, rng)
     for village in villages:
         _stamp_village(world, village, catalog)
-        _stamp_buildings(world, village, catalog, rng)
+        left, right, top, bottom = _village_bounds(village)
+        occupied_features = [
+            (x, y)
+            for x, y in occupied_features
+            if not (left <= x <= right and top <= y <= bottom)
+        ]
+        _stamp_buildings(world, village, catalog, rng, occupied_features)
 
     for index, (start, end) in enumerate(_build_village_connections(villages)):
         _carve_road(world, start, end, catalog, seed + index * 101)
 
     player = _find_spawn(world, catalog.player, catalog)
-    npcs = _spawn_village_npcs(world, villages, player, catalog, rng)
+    npcs = _spawn_village_npcs(world, villages, player, catalog, rng, occupied_features)
     return GeneratedMap(world=world, player=player, npcs=npcs)

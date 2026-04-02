@@ -124,15 +124,16 @@ def test_generate_map_response_shape_and_tiles() -> None:
     assert 4 <= len(village_clusters) <= MAX_VILLAGES
     assert all(100 <= len(cluster) <= 400 for cluster in village_clusters)
     assert all(world[npc["y"]][npc["x"]] == catalog.village for npc in npcs)
-    building_positions = [
+    feature_positions = [
         (x, y)
         for y, row in enumerate(world)
         for x, tile in enumerate(row)
-        if tile in catalog.buildings
+        if tile in set(catalog.trees) | set(catalog.plants) | set(catalog.buildings)
     ]
-    assert building_positions
-    for index, (x, y) in enumerate(building_positions):
-        for other_x, other_y in building_positions[index + 1 :]:
+    feature_positions.extend((npc["x"], npc["y"]) for npc in npcs)
+    assert feature_positions
+    for index, (x, y) in enumerate(feature_positions):
+        for other_x, other_y in feature_positions[index + 1 :]:
             assert max(abs(x - other_x), abs(y - other_y)) >= 3
 
     road_tiles = sum(tile == catalog.road for row in world for tile in row)
