@@ -24,7 +24,7 @@ HTML_SHELL = """
         <h1>Emoji Frontier</h1>
         <p class="intro">
           Generate a 128x128 world, then move the player with WASD while the
-          camera follows across a 15x11 viewport.
+          camera follows across a 30x22 viewport.
         </p>
         <div class="controls">
           <button id="generate-button" type="button">Generate Map</button>
@@ -36,14 +36,14 @@ HTML_SHELL = """
         <div class="viewport-header">
           <div>
             <h2>Viewport</h2>
-            <p>15 x 11 tiles</p>
+            <p>30 x 22 tiles</p>
           </div>
           <div id="player-position">Player: -, -</div>
         </div>
         <canvas
           id="map-canvas"
-          width="720"
-          height="528"
+          width="1020"
+          height="748"
           aria-label="Generated map viewport"
         ></canvas>
       </section>
@@ -88,7 +88,7 @@ def test_browser_can_generate_map_and_move_player() -> None:
                         {
                             "world": MOCK_WORLD,
                             "player": MOCK_PLAYER,
-                            "viewport": {"width": 15, "height": 11},
+                            "viewport": {"width": 30, "height": 22},
                         },
                         ensure_ascii=False,
                     ),
