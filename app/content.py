@@ -8,6 +8,7 @@ from pathlib import Path
 class TileCatalog:
     player: str
     ground: tuple[str, ...]
+    buildings: tuple[str, ...]
     road: str
     village: str
     habitable: frozenset[str]
@@ -33,6 +34,7 @@ def load_tile_catalog(asset_path: Path = ASSET_PATH) -> TileCatalog:
     current_section: str | None = None
     player_tile: str | None = None
     ground_tiles: list[str] = []
+    building_tiles: list[str] = []
 
     for raw_line in asset_path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
@@ -50,11 +52,15 @@ def load_tile_catalog(asset_path: Path = ASSET_PATH) -> TileCatalog:
             player_tile = _extract_emoji(line)
         elif current_section == "Ground":
             ground_tiles.append(_extract_emoji(line))
+        elif current_section == "Buildings":
+            building_tiles.append(_extract_emoji(line))
 
     if player_tile is None:
         raise ValueError("No player tile found in emoji-rpg.txt")
     if not ground_tiles:
         raise ValueError("No ground tiles found in emoji-rpg.txt")
+    if not building_tiles:
+        raise ValueError("No building tiles found in emoji-rpg.txt")
 
     lookup = {tile: tile for tile in ground_tiles}
 
@@ -73,6 +79,7 @@ def load_tile_catalog(asset_path: Path = ASSET_PATH) -> TileCatalog:
     return TileCatalog(
         player=player_tile,
         ground=tuple(ground_tiles),
+        buildings=tuple(building_tiles),
         road=lookup["🟥"],
         village=lookup["🟪"],
         habitable=frozenset((lookup["🟩"], lookup["🟨"], lookup["🟫"])),

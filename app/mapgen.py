@@ -16,6 +16,8 @@ MAX_VILLAGES = 8
 MIN_VILLAGE_SPACING = 18
 MIN_VILLAGE_SIZE = 10
 MAX_VILLAGE_SIZE = 20
+BUILDING_MIN_GAP = 3
+BUILDING_DENSITY = 0.035
 
 
 @dataclass(frozen=True)
@@ -174,6 +176,38 @@ def _stamp_village(world: list[list[str]], village: Village, catalog: TileCatalo
         for x in range(left, right + 1):
             if world[y][x] not in catalog.blocked:
                 world[y][x] = catalog.village
+
+
+def _can_place_building(
+    x: int, y: int, placed: list[tuple[int, int]]
+) -> bool:
+    return all(
+        max(abs(x - other_x), abs(y - other_y)) >= BUILDING_MIN_GAP
+        for other_x, other_y in placed
+    )
+
+
+def _stamp_buildings(
+    world: list[list[str]], village: Village, catalog: TileCatalog, rng: Random
+) -> None:
+    left, right, top, bottom = _village_bounds(village)
+    candidates = [
+        (x, y)
+        for y in range(top + 1, bottom)
+        for x in range(left + 1, right)
+        if world[y][x] == catalog.village
+    ]
+    rng.shuffle(candidates)
+
+    target_count = max(1, int(village.width * village.height * BUILDING_DENSITY))
+    placed: list[tuple[int, int]] = []
+
+    for x, y in candidates:
+        if _can_place_building(x, y, placed):
+            world[y][x] = rng.choice(catalog.buildings)
+            placed.append((x, y))
+            if len(placed) >= target_count:
+                break
 
 
 def _select_village_centers(
@@ -348,6 +382,7 @@ def generate_map(catalog: TileCatalog) -> GeneratedMap:
     villages = _select_village_centers(world, catalog, rng)
     for village in villages:
         _stamp_village(world, village, catalog)
+        _stamp_buildings(world, village, catalog, rng)
 
     for index, (start, end) in enumerate(_build_village_connections(villages)):
         _carve_road(world, start, end, catalog, seed + index * 101)

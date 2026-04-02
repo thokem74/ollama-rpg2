@@ -54,6 +54,7 @@ def test_tile_catalog_loads_expected_sections() -> None:
 
     assert catalog.player == "🙂"
     assert catalog.ground == ("🟥", "🟨", "🟩", "🟪", "🟫", "⬛")
+    assert len(catalog.buildings) > 0
     assert catalog.road == "🟥"
     assert catalog.village == "🟪"
     assert catalog.habitable == frozenset(("🟨", "🟩", "🟫"))
@@ -74,7 +75,7 @@ def test_generate_map_response_shape_and_tiles() -> None:
     assert len(world) == WORLD_HEIGHT
     assert all(len(row) == WORLD_WIDTH for row in world)
 
-    allowed_tiles = set(catalog.ground)
+    allowed_tiles = set(catalog.ground) | set(catalog.buildings)
     assert all(tile in allowed_tiles for row in world for tile in row)
     assert all(tile != "🟦" for row in world for tile in row)
     assert all(tile != "⬜" for row in world for tile in row)
@@ -89,6 +90,16 @@ def test_generate_map_response_shape_and_tiles() -> None:
     village_clusters = _find_clusters(world, catalog.village)
     assert 4 <= len(village_clusters) <= MAX_VILLAGES
     assert all(100 <= len(cluster) <= 400 for cluster in village_clusters)
+    building_positions = [
+        (x, y)
+        for y, row in enumerate(world)
+        for x, tile in enumerate(row)
+        if tile in catalog.buildings
+    ]
+    assert building_positions
+    for index, (x, y) in enumerate(building_positions):
+        for other_x, other_y in building_positions[index + 1 :]:
+            assert max(abs(x - other_x), abs(y - other_y)) >= 3
 
     road_tiles = sum(tile == catalog.road for row in world for tile in row)
     assert road_tiles > 0
