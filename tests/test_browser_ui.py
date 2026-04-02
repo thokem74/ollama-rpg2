@@ -64,6 +64,39 @@ MOCK_COLLISION = {
         "buildings": ["🏠"],
     }
 }
+MOCK_PAYLOAD = {
+    "world": MOCK_WORLD,
+    "player": MOCK_PLAYER,
+    "npcs": MOCK_NPCS,
+    "collision": MOCK_COLLISION,
+    "viewport": {"width": 30, "height": 22},
+}
+
+
+def _install_app_routes(page, request_log: list[str]) -> None:
+    def fulfill_app(route) -> None:
+        url = route.request.url
+        if url == "http://ui.test/":
+            route.fulfill(status=200, content_type="text/html", body=HTML_SHELL)
+        elif url == "http://ui.test/static/styles.css":
+            route.fulfill(status=200, content_type="text/css", body=STYLES_FILE.read_text())
+        elif url == "http://ui.test/static/app.js":
+            route.fulfill(
+                status=200,
+                content_type="application/javascript",
+                body=SCRIPT_FILE.read_text(),
+            )
+        elif url == "http://ui.test/api/map/generate":
+            request_log.append(url)
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(MOCK_PAYLOAD, ensure_ascii=False),
+            )
+        else:
+            route.fulfill(status=404, body="not found")
+
+    page.route("http://ui.test/**", fulfill_app)
 
 
 def _parse_position(label: str) -> tuple[int, int]:
@@ -73,41 +106,12 @@ def _parse_position(label: str) -> tuple[int, int]:
     return int(x_text), int(y_text)
 
 
-def test_browser_can_generate_map_and_move_player() -> None:
+def test_browser_persists_map_and_player_state_after_reload() -> None:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         page = browser.new_page()
-        def fulfill_app(route) -> None:
-            url = route.request.url
-            if url == "http://ui.test/":
-                route.fulfill(status=200, content_type="text/html", body=HTML_SHELL)
-            elif url == "http://ui.test/static/styles.css":
-                route.fulfill(status=200, content_type="text/css", body=STYLES_FILE.read_text())
-            elif url == "http://ui.test/static/app.js":
-                route.fulfill(
-                    status=200,
-                    content_type="application/javascript",
-                    body=SCRIPT_FILE.read_text(),
-                )
-            elif url == "http://ui.test/api/map/generate":
-                route.fulfill(
-                    status=200,
-                    content_type="application/json",
-                    body=json.dumps(
-                        {
-                            "world": MOCK_WORLD,
-                            "player": MOCK_PLAYER,
-                            "npcs": MOCK_NPCS,
-                            "collision": MOCK_COLLISION,
-                            "viewport": {"width": 30, "height": 22},
-                        },
-                        ensure_ascii=False,
-                    ),
-                )
-            else:
-                route.fulfill(status=404, body="not found")
-
-        page.route("http://ui.test/**", fulfill_app)
+        request_log: list[str] = []
+        _install_app_routes(page, request_log)
         page.goto("http://ui.test/", wait_until="load")
 
         assert page.locator("h1").text_content() == "Emoji Frontier"
@@ -121,6 +125,7 @@ def test_browser_can_generate_map_and_move_player() -> None:
               "World ready. Use WASD to move."
             """
         )
+        assert len(request_log) == 1
 
         player_label = page.locator("#player-position").text_content()
         assert player_label is not None
@@ -147,12 +152,7 @@ def test_browser_can_generate_map_and_move_player() -> None:
         assert _parse_position(blocked_npc_label) == (start_x, start_y)
 
         page.keyboard.press("a")
-        page.wait_for_function(
-            """
-            previous => document.querySelector("#player-position")?.textContent !== previous
-            """,
-            arg=player_label,
-        )
+        page.wait_for_function("""() => document.querySelector("#player-position")?.textContent === "Player: 9, 10" """)
 
         moved_label = page.locator("#player-position").text_content()
         assert moved_label is not None
@@ -161,5 +161,70 @@ def test_browser_can_generate_map_and_move_player() -> None:
         assert (start_x, start_y) == (MOCK_PLAYER["x"], MOCK_PLAYER["y"])
         assert (end_x, end_y) == (MOCK_PLAYER["x"] - 1, MOCK_PLAYER["y"])
         assert page.locator("#status").text_content() == "World ready. Use WASD to move."
+
+        page.reload(wait_until="load")
+        page.wait_for_function(
+            """
+            () => document.querySelector("#status")?.textContent ===
+              "Restored saved world. Use WASD to move."
+            """
+        )
+        restored_label = page.locator("#player-position").text_content()
+        assert restored_label is not None
+        assert _parse_position(restored_label) == (MOCK_PLAYER["x"] - 1, MOCK_PLAYER["y"])
+        assert len(request_log) == 1
+
+        page.keyboard.press("d")
+        page.wait_for_function("""() => document.querySelector("#player-position")?.textContent === "Player: 10, 10" """)
+        page.keyboard.press("d")
+        page.wait_for_function(
+            """
+            () => document.querySelector("#status")?.textContent === "Blocked by obstacle."
+            """
+        )
+        blocked_after_restore_label = page.locator("#player-position").text_content()
+        assert blocked_after_restore_label is not None
+        assert _parse_position(blocked_after_restore_label) == (MOCK_PLAYER["x"], MOCK_PLAYER["y"])
+
+        page.reload(wait_until="load")
+        page.wait_for_function(
+            """
+            () => document.querySelector("#status")?.textContent ===
+              "Restored saved world. Use WASD to move."
+            """
+        )
+        reloaded_after_block_label = page.locator("#player-position").text_content()
+        assert reloaded_after_block_label is not None
+        assert _parse_position(reloaded_after_block_label) == (MOCK_PLAYER["x"], MOCK_PLAYER["y"])
+        assert len(request_log) == 1
+
+        browser.close()
+
+
+def test_browser_ignores_invalid_saved_world() -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        page = browser.new_page()
+        request_log: list[str] = []
+        _install_app_routes(page, request_log)
+        page.add_init_script(
+            """
+            window.localStorage.setItem("ollama-rpg2:map-state:v1", "{broken");
+            """
+        )
+        page.goto("http://ui.test/", wait_until="load")
+
+        assert page.locator("#status").text_content() == "Ready to generate a world."
+        assert page.locator("#player-position").text_content() == "Player: -, -"
+        assert len(request_log) == 0
+
+        page.locator("#generate-button").click()
+        page.wait_for_function(
+            """
+            () => document.querySelector("#status")?.textContent ===
+              "World ready. Use WASD to move."
+            """
+        )
+        assert len(request_log) == 1
 
         browser.close()

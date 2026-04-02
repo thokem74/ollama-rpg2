@@ -3,6 +3,7 @@ const context = canvas.getContext("2d");
 const generateButton = document.getElementById("generate-button");
 const statusLabel = document.getElementById("status");
 const playerPosition = document.getElementById("player-position");
+const STORAGE_KEY = "ollama-rpg2:map-state:v1";
 
 const state = {
   world: [],
@@ -28,6 +29,149 @@ function clamp(value, min, max) {
 
 function hasWorld() {
   return state.world.length > 0 && state.player;
+}
+
+function storageAvailable() {
+  try {
+    return typeof window !== "undefined" && !!window.localStorage;
+  } catch (error) {
+    console.warn("Local storage is unavailable.", error);
+    return false;
+  }
+}
+
+function isTileList(value) {
+  return Array.isArray(value) && value.every((tile) => typeof tile === "string");
+}
+
+function isValidWorld(world) {
+  return (
+    Array.isArray(world) &&
+    world.length > 0 &&
+    world.every((row) => Array.isArray(row) && row.length > 0 && row.every((tile) => typeof tile === "string"))
+  );
+}
+
+function isValidPlayer(player) {
+  return (
+    player &&
+    Number.isInteger(player.x) &&
+    Number.isInteger(player.y) &&
+    typeof player.tile === "string"
+  );
+}
+
+function isValidNpcs(npcs) {
+  return (
+    Array.isArray(npcs) &&
+    npcs.every(
+      (npc) =>
+        npc &&
+        Number.isInteger(npc.x) &&
+        Number.isInteger(npc.y) &&
+        typeof npc.tile === "string"
+    )
+  );
+}
+
+function isValidCollision(collision) {
+  return (
+    collision &&
+    collision.tiles &&
+    isTileList(collision.tiles.trees) &&
+    isTileList(collision.tiles.plants) &&
+    isTileList(collision.tiles.buildings)
+  );
+}
+
+function isValidViewport(viewport) {
+  return viewport && Number.isInteger(viewport.width) && Number.isInteger(viewport.height);
+}
+
+function canRestoreState(payload) {
+  return (
+    payload &&
+    isValidWorld(payload.world) &&
+    isValidPlayer(payload.player) &&
+    isValidNpcs(payload.npcs) &&
+    isValidCollision(payload.collision) &&
+    isValidViewport(payload.viewport)
+  );
+}
+
+function applyPayload(payload) {
+  state.world = payload.world;
+  state.player = payload.player;
+  state.npcs = payload.npcs;
+  state.collision = payload.collision;
+  state.viewport = payload.viewport;
+}
+
+function snapshotState() {
+  return {
+    world: state.world,
+    player: state.player,
+    npcs: state.npcs,
+    collision: state.collision,
+    viewport: state.viewport,
+  };
+}
+
+function clearSavedState() {
+  if (!storageAvailable()) {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch (error) {
+    console.warn("Could not clear saved world.", error);
+  }
+}
+
+function saveState() {
+  if (!storageAvailable() || !hasWorld()) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshotState()));
+  } catch (error) {
+    console.warn("Could not save world.", error);
+  }
+}
+
+function restoreSavedState() {
+  if (!storageAvailable()) {
+    return false;
+  }
+
+  let rawPayload;
+  try {
+    rawPayload = window.localStorage.getItem(STORAGE_KEY);
+  } catch (error) {
+    console.warn("Could not read saved world.", error);
+    return false;
+  }
+
+  if (!rawPayload) {
+    return false;
+  }
+
+  try {
+    const payload = JSON.parse(rawPayload);
+    if (!canRestoreState(payload)) {
+      clearSavedState();
+      return false;
+    }
+
+    applyPayload(payload);
+    return true;
+  } catch (error) {
+    console.warn("Saved world is invalid.", error);
+    clearSavedState();
+    return false;
+  }
 }
 
 function cameraOrigin() {
@@ -128,11 +272,14 @@ async function generateMap() {
     }
 
     const payload = await response.json();
-    state.world = payload.world;
-    state.player = payload.player;
-    state.npcs = payload.npcs ?? [];
-    state.collision = payload.collision ?? state.collision;
-    state.viewport = payload.viewport;
+    applyPayload({
+      world: payload.world,
+      player: payload.player,
+      npcs: payload.npcs ?? [],
+      collision: payload.collision ?? state.collision,
+      viewport: payload.viewport,
+    });
+    saveState();
     updatePlayerLabel();
     drawViewport();
     updateStatus("World ready. Use WASD to move.");
@@ -164,6 +311,7 @@ function movePlayer(dx, dy) {
 
   state.player.x = nextX;
   state.player.y = nextY;
+  saveState();
   updatePlayerLabel();
   drawViewport();
   updateStatus("World ready. Use WASD to move.");
@@ -189,5 +337,13 @@ window.addEventListener("keydown", (event) => {
     movePlayer(1, 0);
   }
 });
+
+if (restoreSavedState()) {
+  updatePlayerLabel();
+  drawViewport();
+  updateStatus("Restored saved world. Use WASD to move.");
+} else {
+  updatePlayerLabel();
+}
 
 drawViewport();
