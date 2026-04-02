@@ -1,0 +1,77 @@
+# Curated RPG-oriented subset of assets/unicode/emoji-ordering.txt
+# Original entry format is preserved for copied lines.
+
+# Ground
+U+1F7E5 ; 12.0 # 🟥 road
+U+1F7E8 ; 12.0 # 🟨 sand
+U+1F7E9 ; 12.0 # 🟩 grass
+U+1F7E6 ; 12.0 # 🟦 water
+U+1F7EB ; 12.0 # 🟫 soil
+U+2B1B ; 0.6 # ⬛ rock
+U+2B1C ; 0.6 # ⬜ snow
+
+# Trees
+U+1F332 ; 1.0 # 🌲 evergreen tree
+U+1F333 ; 1.0 # 🌳 deciduous tree
+U+1F334 ; 0.6 # 🌴 palm tree
+U+1F335 ; 0.6 # 🌵 cactus
+U+1FABE ; 16.0 # 🪾 leafless tree
+U+1F384 ; 0.6 # 🎄 Christmas tree
+
+# Plants
+U+1F490 ; 0.6 # 💐 bouquet
+U+1F338 ; 0.6 # 🌸 cherry blossom
+U+1F4AE ; 0.6 # 💮 white flower
+U+1FAB7 ; 14.0 # 🪷 lotus
+U+1F339 ; 0.6 # 🌹 rose
+U+1F940 ; 3.0 # 🥀 wilted flower
+U+1F33A ; 0.6 # 🌺 hibiscus
+U+1F33B ; 0.6 # 🌻 sunflower
+U+1F33C ; 0.6 # 🌼 blossom
+U+1F337 ; 0.6 # 🌷 tulip
+U+1FABB ; 15.0 # 🪻 hyacinth
+U+1F331 ; 0.6 # 🌱 seedling
+U+1FAB4 ; 13.0 # 🪴 potted plant
+U+1F332 ; 1.0 # 🌲 evergreen tree
+U+1F333 ; 1.0 # 🌳 deciduous tree
+U+1F334 ; 0.6 # 🌴 palm tree
+U+1F335 ; 0.6 # 🌵 cactus
+U+1F33E ; 0.6 # 🌾 sheaf of rice
+U+1F33F ; 0.6 # 🌿 herb
+U+1F340 ; 0.6 # 🍀 four leaf clover
+U+1F341 ; 0.6 # 🍁 maple leaf
+U+1F342 ; 0.6 # 🍂 fallen leaf
+U+1F343 ; 0.6 # 🍃 leaf fluttering in wind
+U+1FAB9 ; 14.0 # 🪹 empty nest
+U+1FABA ; 14.0 # 🪺 nest with eggs
+U+1F344 ; 0.6 # 🍄 mushroom
+
+# Buildings
+U+1F6D6 ; 13.0 # 🛖 hut
+U+1F3D8 ; 0.7 # 🏘 houses
+U+1F3DA ; 0.7 # 🏚 derelict house
+U+1F3E0 ; 0.6 # 🏠 house
+U+1F3E1 ; 0.6 # 🏡 house with garden
+U+1F3E2 ; 0.6 # 🏢 office building
+U+1F3E3 ; 0.6 # 🏣 Japanese post office
+U+1F3E4 ; 1.0 # 🏤 post office
+U+1F3E5 ; 0.6 # 🏥 hospital
+U+1F3E6 ; 0.6 # 🏦 bank
+U+1F3E8 ; 0.6 # 🏨 hotel
+U+1F3E9 ; 0.6 # 🏩 love hotel
+U+1F3EA ; 0.6 # 🏪 convenience store
+U+1F3EB ; 0.6 # 🏫 school
+U+1F3EC ; 0.6 # 🏬 department store
+U+1F3ED ; 0.6 # 🏭 factory
+U+1F3EF ; 0.6 # 🏯 Japanese castle
+U+1F3F0 ; 0.6 # 🏰 castle
+U+26EA ; 0.6 # ⛪ church
+U+1F54C ; 1.0 # 🕌 mosque
+U+1F6D5 ; 12.0 # 🛕 hindu temple
+U+1F54D ; 1.0 # 🕍 synagogue
+
+# Div
+U+1F9F1 ; 11.0 # 🧱 brick
+U+1FAA8 ; 13.0 # 🪨 rock
+U+1FAB5 ; 13.0 # 🪵 wood
+U+1F6D6 ; 13.0 # 🛖 hut
