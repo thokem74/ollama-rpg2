@@ -17,24 +17,40 @@
         </p>
         <div class="controls">
           <button id="generate-button" type="button">Generate Map</button>
+          <button id="generate-lore-button" type="button">Generate Lore</button>
+          <button id="reset-button" type="button">Reset</button>
           <span id="status">Ready to generate a world.</span>
         </div>
       </section>
 
-      <section class="viewport-panel">
-        <div class="viewport-header">
-          <div>
-            <h2>Viewport</h2>
-            <p>30 x 22 tiles</p>
+      <section class="world-layout">
+        <aside class="history-panel">
+          <div class="history-header">
+            <div>
+              <h2>History</h2>
+              <p>World lore and discoveries</p>
+            </div>
           </div>
-          <div id="player-position">Player: -, -</div>
-        </div>
-        <canvas
-          id="map-canvas"
-          width="1020"
-          height="748"
-          aria-label="Generated map viewport"
-        ></canvas>
+          <div id="history-window" class="history-window" aria-live="polite">
+            <p class="history-empty">Generate lore to begin your chronicle.</p>
+          </div>
+        </aside>
+
+        <section class="viewport-panel">
+          <div class="viewport-header">
+            <div>
+              <h2>Viewport</h2>
+              <p>30 x 22 tiles</p>
+            </div>
+            <div id="player-position">Player: -, -</div>
+          </div>
+          <canvas
+            id="map-canvas"
+            width="1020"
+            height="748"
+            aria-label="Generated map viewport"
+          ></canvas>
+        </section>
       </section>
     </main>
 

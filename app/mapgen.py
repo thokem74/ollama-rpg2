@@ -44,6 +44,7 @@ class GeneratedMap:
     world: list[list[str]]
     player: PlayerSpawn
     npcs: list[NPCSpawn]
+    villages: list["Village"]
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,32 @@ class Village:
     center_y: int
     width: int
     height: int
+
+
+def village_id(village: Village) -> str:
+    left, right, top, bottom = _village_bounds(village)
+    return f"village:{left}:{top}:{right}:{bottom}"
+
+
+def village_payload(village: Village) -> dict[str, object]:
+    left, right, top, bottom = _village_bounds(village)
+    return {
+        "id": village_id(village),
+        "bounds": {
+            "left": left,
+            "right": right,
+            "top": top,
+            "bottom": bottom,
+        },
+        "center": {
+            "x": village.center_x,
+            "y": village.center_y,
+        },
+        "size": {
+            "width": village.width,
+            "height": village.height,
+        },
+    }
 
 
 def _build_ground_lookup(ground_tiles: tuple[str, ...]) -> dict[str, str]:
@@ -506,4 +533,4 @@ def generate_map(catalog: TileCatalog) -> GeneratedMap:
 
     player = _find_spawn(world, catalog.player, catalog)
     npcs = _spawn_village_npcs(world, villages, player, catalog, rng, occupied_features)
-    return GeneratedMap(world=world, player=player, npcs=npcs)
+    return GeneratedMap(world=world, player=player, npcs=npcs, villages=villages)
