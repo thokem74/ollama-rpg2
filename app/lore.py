@@ -213,6 +213,29 @@ def _call_ollama(base_url: str, model: str, prompt: str) -> str:
     return text
 
 
+def _normalize_whitespace(value: str) -> str:
+    return " ".join(value.split())
+
+
+def _parse_positive_int_setting(name: str) -> int:
+    value = require_setting(name)
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise RuntimeError(f"Setting {name} must be an integer.") from exc
+
+    if parsed <= 0:
+        raise RuntimeError(f"Setting {name} must be greater than 0.")
+    return parsed
+
+
+def _limit_words(text: str, max_words: int) -> str:
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    return " ".join(words[:max_words]).strip()
+
+
 def _validate_lore_text(value: Any, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field_name} must be a non-empty string.")
@@ -250,7 +273,7 @@ def _fallback_npc_description(npc: dict[str, Any]) -> str:
 def _sanitize_text(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
-    text = value.strip()
+    text = _normalize_whitespace(value)
     return text or None
 
 
@@ -381,3 +404,97 @@ async def generate_lore_payload(
     raw_text = _call_ollama(base_url, model, prompt)
     raw_payload = _extract_json_object(raw_text)
     return _merge_lore(raw_payload, villages, sorted_npcs)
+
+
+def _build_npc_chat_prompt(
+    world_lore: str,
+    npc: dict[str, str],
+    transcript: list[list[str]],
+    player_line: str,
+    max_words: int,
+) -> str:
+    context = {
+        "worldLore": world_lore,
+        "npc": npc,
+        "recentTranscript": transcript,
+        "playerLine": player_line,
+        "maxWords": max_words,
+    }
+    return (
+        "You are roleplaying a single NPC in a whimsical emoji RPG world.\n"
+        "Stay fully in character as the provided NPC.\n"
+        "Base your response only on the NPC's name, description, world lore, and recent transcript.\n"
+        "Do not speak as a narrator, system, assistant, or any other character.\n"
+        "Reply with no more than the provided maxWords limit.\n"
+        "Return strict JSON only with this shape:\n"
+        '{"reply":"string"}\n'
+        "Context:\n"
+        f"{json.dumps(context, ensure_ascii=False)}"
+    )
+
+
+def _extract_npc_reply(raw_text: str, max_words: int) -> str:
+    raw_payload = _extract_json_object(raw_text)
+    reply = raw_payload.get("reply")
+    if not isinstance(reply, str) or not reply.strip():
+        raise ValueError("Ollama returned invalid JSON npc chat.")
+    normalized = _normalize_whitespace(reply)
+    limited = _limit_words(normalized, max_words)
+    if not limited:
+        raise ValueError("Ollama returned invalid JSON npc chat.")
+    return limited
+
+
+async def generate_npc_chat_reply(
+    *,
+    npc_id: str,
+    world_lore: str,
+    npc: dict[str, str],
+    transcript: list[list[str]],
+    player_line: str,
+) -> str:
+    if not npc_id.strip():
+        raise ValueError("npcId must be a non-empty string.")
+
+    normalized_world_lore = _sanitize_text(world_lore)
+    if not normalized_world_lore:
+        raise ValueError("worldLore must be a non-empty string.")
+
+    normalized_player_line = _sanitize_text(player_line)
+    if not normalized_player_line:
+        raise ValueError("playerLine must be a non-empty string.")
+
+    normalized_npc = {
+        "id": _sanitize_text(npc.get("id")),
+        "name": _sanitize_text(npc.get("name")),
+        "description": _sanitize_text(npc.get("description")),
+    }
+    if normalized_npc["id"] != npc_id:
+        raise ValueError("npc.id must match npcId.")
+    if not normalized_npc["name"] or not normalized_npc["description"]:
+        raise ValueError("npc must include non-empty name and description.")
+
+    normalized_transcript: list[list[str]] = []
+    for entry in transcript:
+        if not isinstance(entry, list) or len(entry) != 2:
+            raise ValueError("transcript entries must be [speaker, text].")
+        speaker, text = entry
+        if speaker not in {"u", "n"}:
+            raise ValueError("transcript speaker must be 'u' or 'n'.")
+        normalized_text = _sanitize_text(text)
+        if not normalized_text:
+            continue
+        normalized_transcript.append([speaker, normalized_text])
+
+    base_url = require_setting("OLLAMA_BASE_URL")
+    model = require_setting("OLLAMA_NPC_MODEL")
+    max_words = _parse_positive_int_setting("OLLAMA_NPC_MAX_WORDS")
+    prompt = _build_npc_chat_prompt(
+        normalized_world_lore,
+        normalized_npc,
+        normalized_transcript,
+        normalized_player_line,
+        max_words,
+    )
+    raw_text = _call_ollama(base_url, model, prompt)
+    return _extract_npc_reply(raw_text, max_words)

@@ -48,9 +48,34 @@
             id="map-canvas"
             width="1020"
             height="748"
+            tabindex="0"
             aria-label="Generated map viewport"
           ></canvas>
         </section>
+
+        <aside class="chat-panel">
+          <div class="chat-header">
+            <div>
+              <p class="eyebrow">Village Voices</p>
+              <h2 id="chat-title">No conversation</h2>
+            </div>
+          </div>
+          <p id="chat-description" class="chat-description">
+            Walk next to an NPC, generate lore, then press E to talk.
+          </p>
+          <div id="chat-window" class="chat-window" aria-live="polite">
+            <p class="chat-empty">No NPC selected.</p>
+          </div>
+          <form id="chat-form" class="chat-form">
+            <label class="sr-only" for="chat-input">Your line</label>
+            <textarea
+              id="chat-input"
+              rows="4"
+              placeholder="Type what you want to say, then press Enter."
+            ></textarea>
+            <button id="chat-send-button" type="submit">Send line</button>
+          </form>
+        </aside>
       </section>
     </main>
 
