@@ -2,8 +2,11 @@ import asyncio
 import json
 from collections import deque
 
+from fastapi import HTTPException
+import pytest
+
 from app.content import load_tile_catalog
-from app.main import app, create_map
+from app.main import LoreRequest, app, create_lore, create_map
 from app.mapgen import (
     MIN_VILLAGE_SPACING,
     MAX_VILLAGES,
@@ -83,6 +86,7 @@ def test_generate_map_response_shape_and_tiles() -> None:
     npcs = payload["npcs"]
     collision = payload["collision"]
     viewport = payload["viewport"]
+    villages = payload["villages"]
     catalog = load_tile_catalog()
 
     assert len(world) == WORLD_HEIGHT
@@ -117,6 +121,7 @@ def test_generate_map_response_shape_and_tiles() -> None:
     assert world[player["y"]][player["x"]] != "🟦"
     assert npcs
     assert all(npc["tile"] in catalog.npcs for npc in npcs)
+    assert all(npc["id"] == f"npc:{npc['x']}:{npc['y']}" for npc in npcs)
     assert collision == {
         "tiles": {
             "trees": list(catalog.trees),
@@ -153,6 +158,13 @@ def test_generate_map_response_shape_and_tiles() -> None:
             dx = center[0] - other[0]
             dy = center[1] - other[1]
             assert (dx * dx) + (dy * dy) >= (MIN_VILLAGE_SPACING - 4) ** 2
+
+    assert len(villages) >= len(village_clusters)
+    assert len(villages) <= MAX_VILLAGES
+    assert all(village["id"].startswith("village:") for village in villages)
+    assert all(village["bounds"]["left"] <= village["center"]["x"] <= village["bounds"]["right"] for village in villages)
+    assert all(village["bounds"]["top"] <= village["center"]["y"] <= village["bounds"]["bottom"] for village in villages)
+    assert len({village["id"] for village in villages}) == len(villages)
 
 
 def test_road_network_connects_village_clusters() -> None:
@@ -193,6 +205,128 @@ def test_road_network_connects_village_clusters() -> None:
     )
 
 
+def test_lore_generate_endpoint_returns_world_village_and_npc_lore(monkeypatch) -> None:
+    world = [["🟩" for _ in range(6)] for _ in range(6)]
+    for y in range(1, 3):
+        for x in range(1, 3):
+            world[y][x] = "🟪"
+    npcs = [{"id": "npc:4:1", "x": 4, "y": 1, "tile": "🧑‍🌾"}]
+
+    monkeypatch.setattr(
+        "app.lore._call_ollama",
+        lambda base_url, model, prompt: json.dumps(
+            {
+                "worldLore": "A patient frontier grows between fields and footpaths.",
+                "villages": [
+                    {
+                        "id": "village:1:1:2:2",
+                        "name": "Moss Hollow",
+                        "description": "A snug village where every porch faces the same market square.",
+                    }
+                ],
+                "npcs": [
+                    {
+                        "id": "npc:4:1",
+                        "name": "Toma Reed",
+                        "description": "A farmer who knows every shortcut through the valley.",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+    )
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
+
+    response = asyncio.run(create_lore(LoreRequest.model_validate({"world": world, "npcs": npcs})))
+    assert response.media_type == "application/json"
+    payload = json.loads(response.body)
+    assert payload["worldLore"] == "A patient frontier grows between fields and footpaths."
+    assert payload["villages"] == [
+        {
+            "id": "village:1:1:2:2",
+            "name": "Moss Hollow",
+            "description": "A snug village where every porch faces the same market square.",
+            "bounds": {"left": 1, "right": 2, "top": 1, "bottom": 2},
+            "center": {"x": 2, "y": 2},
+            "tileCount": 4,
+        }
+    ]
+    assert payload["npcs"] == [
+        {
+            "id": "npc:4:1",
+            "x": 4,
+            "y": 1,
+            "tile": "🧑‍🌾",
+            "name": "Toma Reed",
+            "description": "A farmer who knows every shortcut through the valley.",
+        }
+    ]
+
+
+def test_lore_generate_endpoint_rejects_malformed_ollama_output(monkeypatch) -> None:
+    world = [["🟩" for _ in range(4)] for _ in range(4)]
+    world[1][1] = "🟪"
+    npcs = [{"id": "npc:2:1", "x": 2, "y": 1, "tile": "🧑‍🌾"}]
+
+    monkeypatch.setattr(
+        "app.lore._call_ollama",
+        lambda base_url, model, prompt: "not valid json at all",
+    )
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(create_lore(LoreRequest.model_validate({"world": world, "npcs": npcs})))
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "Ollama returned invalid JSON lore."
+
+
+def test_lore_generate_endpoint_repairs_common_ollama_formatting_and_id_issues(monkeypatch) -> None:
+    world = [["🟩" for _ in range(5)] for _ in range(5)]
+    world[1][1] = "🟪"
+    world[1][2] = "🟪"
+    npcs = [{"id": "npc:3:1", "x": 3, "y": 1, "tile": "🧑‍🌾"}]
+
+    monkeypatch.setattr(
+        "app.lore._call_ollama",
+        lambda base_url, model, prompt: (
+            'Here is your lore:\n'
+            + json.dumps(
+                {
+                    "worldLore": "A windy trade path ties the settlement to the open grasslands.",
+                    "villages": [
+                        {
+                            "name": "Bramble Post",
+                            "description": "A tiny waypoint where caravans rest before dusk.",
+                        }
+                    ],
+                    "npcs": [
+                        {
+                            "id": "wrong-id",
+                            "name": "Edda Pike",
+                            "description": "A patient guide who knows the safest roadside camps.",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        ),
+    )
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
+
+    response = asyncio.run(create_lore(LoreRequest.model_validate({"world": world, "npcs": npcs})))
+    payload = json.loads(response.body)
+
+    assert payload["worldLore"] == "A windy trade path ties the settlement to the open grasslands."
+    assert payload["villages"][0]["id"] == "village:1:1:2:1"
+    assert payload["villages"][0]["name"] == "Bramble Post"
+    assert payload["npcs"][0]["id"] == "npc:3:1"
+    assert payload["npcs"][0]["name"] == "Edda Pike"
+
+
 def test_app_routes_include_ui_and_generation_endpoint() -> None:
     routes = {
         (method, route.path)
@@ -203,3 +337,4 @@ def test_app_routes_include_ui_and_generation_endpoint() -> None:
 
     assert ("GET", "/") in routes
     assert ("POST", "/api/map/generate") in routes
+    assert ("POST", "/api/lore/generate") in routes
