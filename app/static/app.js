@@ -1,0 +1,349 @@
+const canvas = document.getElementById("map-canvas");
+const context = canvas.getContext("2d");
+const generateButton = document.getElementById("generate-button");
+const statusLabel = document.getElementById("status");
+const playerPosition = document.getElementById("player-position");
+const STORAGE_KEY = "ollama-rpg2:map-state:v1";
+
+const state = {
+  world: [],
+  player: null,
+  npcs: [],
+  collision: {
+    tiles: {
+      trees: [],
+      plants: [],
+      buildings: [],
+    },
+  },
+  viewport: { width: 30, height: 22 },
+};
+
+const emojiFontSize = 30;
+const tileGap = 4;
+const tileStep = emojiFontSize + tileGap;
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function hasWorld() {
+  return state.world.length > 0 && state.player;
+}
+
+function storageAvailable() {
+  try {
+    return typeof window !== "undefined" && !!window.localStorage;
+  } catch (error) {
+    console.warn("Local storage is unavailable.", error);
+    return false;
+  }
+}
+
+function isTileList(value) {
+  return Array.isArray(value) && value.every((tile) => typeof tile === "string");
+}
+
+function isValidWorld(world) {
+  return (
+    Array.isArray(world) &&
+    world.length > 0 &&
+    world.every((row) => Array.isArray(row) && row.length > 0 && row.every((tile) => typeof tile === "string"))
+  );
+}
+
+function isValidPlayer(player) {
+  return (
+    player &&
+    Number.isInteger(player.x) &&
+    Number.isInteger(player.y) &&
+    typeof player.tile === "string"
+  );
+}
+
+function isValidNpcs(npcs) {
+  return (
+    Array.isArray(npcs) &&
+    npcs.every(
+      (npc) =>
+        npc &&
+        Number.isInteger(npc.x) &&
+        Number.isInteger(npc.y) &&
+        typeof npc.tile === "string"
+    )
+  );
+}
+
+function isValidCollision(collision) {
+  return (
+    collision &&
+    collision.tiles &&
+    isTileList(collision.tiles.trees) &&
+    isTileList(collision.tiles.plants) &&
+    isTileList(collision.tiles.buildings)
+  );
+}
+
+function isValidViewport(viewport) {
+  return viewport && Number.isInteger(viewport.width) && Number.isInteger(viewport.height);
+}
+
+function canRestoreState(payload) {
+  return (
+    payload &&
+    isValidWorld(payload.world) &&
+    isValidPlayer(payload.player) &&
+    isValidNpcs(payload.npcs) &&
+    isValidCollision(payload.collision) &&
+    isValidViewport(payload.viewport)
+  );
+}
+
+function applyPayload(payload) {
+  state.world = payload.world;
+  state.player = payload.player;
+  state.npcs = payload.npcs;
+  state.collision = payload.collision;
+  state.viewport = payload.viewport;
+}
+
+function snapshotState() {
+  return {
+    world: state.world,
+    player: state.player,
+    npcs: state.npcs,
+    collision: state.collision,
+    viewport: state.viewport,
+  };
+}
+
+function clearSavedState() {
+  if (!storageAvailable()) {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch (error) {
+    console.warn("Could not clear saved world.", error);
+  }
+}
+
+function saveState() {
+  if (!storageAvailable() || !hasWorld()) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshotState()));
+  } catch (error) {
+    console.warn("Could not save world.", error);
+  }
+}
+
+function restoreSavedState() {
+  if (!storageAvailable()) {
+    return false;
+  }
+
+  let rawPayload;
+  try {
+    rawPayload = window.localStorage.getItem(STORAGE_KEY);
+  } catch (error) {
+    console.warn("Could not read saved world.", error);
+    return false;
+  }
+
+  if (!rawPayload) {
+    return false;
+  }
+
+  try {
+    const payload = JSON.parse(rawPayload);
+    if (!canRestoreState(payload)) {
+      clearSavedState();
+      return false;
+    }
+
+    applyPayload(payload);
+    return true;
+  } catch (error) {
+    console.warn("Saved world is invalid.", error);
+    clearSavedState();
+    return false;
+  }
+}
+
+function cameraOrigin() {
+  const worldHeight = state.world.length;
+  const worldWidth = state.world[0]?.length ?? 0;
+  const halfWidth = Math.floor(state.viewport.width / 2);
+  const halfHeight = Math.floor(state.viewport.height / 2);
+
+  const left = clamp(state.player.x - halfWidth, 0, worldWidth - state.viewport.width);
+  const top = clamp(state.player.y - halfHeight, 0, worldHeight - state.viewport.height);
+  return { left, top };
+}
+
+function updateStatus(text) {
+  statusLabel.textContent = text;
+}
+
+function updatePlayerLabel() {
+  if (!state.player) {
+    playerPosition.textContent = "Player: -, -";
+    return;
+  }
+
+  playerPosition.textContent = `Player: ${state.player.x}, ${state.player.y}`;
+}
+
+function collidesWithNpc(x, y) {
+  return state.npcs.some((npc) => npc.x === x && npc.y === y);
+}
+
+function collidesWithTile(x, y) {
+  const tile = state.world[y]?.[x];
+  const blockingTiles = new Set([
+    ...state.collision.tiles.trees,
+    ...state.collision.tiles.plants,
+    ...state.collision.tiles.buildings,
+  ]);
+  return blockingTiles.has(tile);
+}
+
+function resizeCanvas() {
+  canvas.width = state.viewport.width * tileStep - tileGap;
+  canvas.height = state.viewport.height * tileStep - tileGap;
+}
+
+function drawViewport() {
+  resizeCanvas();
+  context.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (!hasWorld()) {
+    context.fillStyle = "#f7f7ec";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#5f8f33";
+    context.font = "24px Trebuchet MS";
+    context.textAlign = "center";
+    context.fillText("Generate a map to begin.", canvas.width / 2, canvas.height / 2);
+    return;
+  }
+
+  const camera = cameraOrigin();
+
+  context.fillStyle = "#f7f7ec";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.font = `${emojiFontSize}px 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif`;
+
+  for (let row = 0; row < state.viewport.height; row += 1) {
+    for (let col = 0; col < state.viewport.width; col += 1) {
+      const worldX = camera.left + col;
+      const worldY = camera.top + row;
+      const tile = state.world[worldY][worldX];
+      const centerX = col * tileStep + emojiFontSize / 2;
+      const centerY = row * tileStep + emojiFontSize / 2;
+
+      context.fillText(tile, centerX, centerY + 2);
+
+      const npc = state.npcs.find((candidate) => candidate.x === worldX && candidate.y === worldY);
+      if (npc) {
+        context.fillText(npc.tile, centerX, centerY + 2);
+      }
+
+      if (state.player.x === worldX && state.player.y === worldY) {
+        context.fillText(state.player.tile, centerX, centerY + 2);
+      }
+    }
+  }
+}
+
+async function generateMap() {
+  generateButton.disabled = true;
+  updateStatus("Generating world...");
+
+  try {
+    const response = await fetch("/api/map/generate", { method: "POST" });
+    if (!response.ok) {
+      throw new Error(`Map generation failed with ${response.status}`);
+    }
+
+    const payload = await response.json();
+    applyPayload({
+      world: payload.world,
+      player: payload.player,
+      npcs: payload.npcs ?? [],
+      collision: payload.collision ?? state.collision,
+      viewport: payload.viewport,
+    });
+    saveState();
+    updatePlayerLabel();
+    drawViewport();
+    updateStatus("World ready. Use WASD to move.");
+  } catch (error) {
+    console.error(error);
+    updateStatus("Could not generate the map.");
+  } finally {
+    generateButton.disabled = false;
+  }
+}
+
+function movePlayer(dx, dy) {
+  if (!hasWorld()) {
+    return;
+  }
+
+  const worldHeight = state.world.length;
+  const worldWidth = state.world[0].length;
+  const nextX = clamp(state.player.x + dx, 0, worldWidth - 1);
+  const nextY = clamp(state.player.y + dy, 0, worldHeight - 1);
+
+  if (
+    (nextX !== state.player.x || nextY !== state.player.y) &&
+    (collidesWithNpc(nextX, nextY) || collidesWithTile(nextX, nextY))
+  ) {
+    updateStatus("Blocked by obstacle.");
+    return;
+  }
+
+  state.player.x = nextX;
+  state.player.y = nextY;
+  saveState();
+  updatePlayerLabel();
+  drawViewport();
+  updateStatus("World ready. Use WASD to move.");
+}
+
+generateButton.addEventListener("click", () => {
+  generateMap();
+});
+
+window.addEventListener("keydown", (event) => {
+  const key = event.key.toLowerCase();
+  if (["w", "a", "s", "d"].includes(key)) {
+    event.preventDefault();
+  }
+
+  if (key === "w") {
+    movePlayer(0, -1);
+  } else if (key === "s") {
+    movePlayer(0, 1);
+  } else if (key === "a") {
+    movePlayer(-1, 0);
+  } else if (key === "d") {
+    movePlayer(1, 0);
+  }
+});
+
+if (restoreSavedState()) {
+  updatePlayerLabel();
+  drawViewport();
+  updateStatus("Restored saved world. Use WASD to move.");
+} else {
+  updatePlayerLabel();
+}
+
+drawViewport();

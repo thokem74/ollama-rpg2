@@ -1,14 +1,29 @@
 # Curated RPG-oriented subset of assets/unicode/emoji-ordering.txt
 # Original entry format is preserved for copied lines.
 
+# Player
+U+1F642 ; 1.0 # 🙂 slightly smiling face
+
+# NPCs
+U+1F468 U+200D U+1F9B0 ; 11.0 # 👨‍🦰 man: red hair
+U+1F468 U+200D U+1F9B1 ; 11.0 # 👨‍🦱 man: curly hair
+U+1F468 U+200D U+1F9B3 ; 11.0 # 👨‍🦳 man: white hair
+U+1F468 U+200D U+1F9B2 ; 11.0 # 👨‍🦲 man: bald
+U+1F469 U+200D U+1F9B0 ; 11.0 # 👩‍🦰 woman: red hair
+U+1F9D1 U+200D U+1F9B0 ; 12.1 # 🧑‍🦰 person: red hair
+U+1F469 U+200D U+1F9B1 ; 11.0 # 👩‍🦱 woman: curly hair
+U+1F9D1 U+200D U+1F9B1 ; 12.1 # 🧑‍🦱 person: curly hair
+U+1F469 U+200D U+1F9B3 ; 11.0 # 👩‍🦳 woman: white hair
+U+1F9D1 U+200D U+1F9B3 ; 12.1 # 🧑‍🦳 person: white hair
+U+1F469 U+200D U+1F9B2 ; 11.0 # 👩‍🦲 woman: bald
+U+1F9D1 U+200D U+1F9B2 ; 12.1 # 🧑‍🦲 person: bald
+
 # Ground
+U+1F7E2 ; 12.0 # 🟢 forest
 U+1F7E5 ; 12.0 # 🟥 road
-U+1F7E8 ; 12.0 # 🟨 sand
 U+1F7E9 ; 12.0 # 🟩 grass
-U+1F7E6 ; 12.0 # 🟦 water
+U+1F7EA ; 12.0 # 🟪 village
 U+1F7EB ; 12.0 # 🟫 soil
-U+2B1B ; 0.6 # ⬛ rock
-U+2B1C ; 0.6 # ⬜ snow
 
 # Trees
 U+1F332 ; 1.0 # 🌲 evergreen tree
