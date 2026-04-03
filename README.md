@@ -63,6 +63,10 @@ To enable all app logging, set this in your `.env`:
 
 `APP_LOGGING_ENABLED=true`
 
+or in terminal:
+
+`export APP_LOGGING_ENABLED=true`
+
 You can copy the values from [.env.example](/home/thokem/Workspace/ollama-rpg2/.env.example) and then change the logging flag there.
 
 When logging is enabled, the app writes these files in `logs/`:
