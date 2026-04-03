@@ -1,25 +1,132 @@
+const rootElement = document.documentElement;
 const canvas = document.getElementById("map-canvas");
 const context = canvas.getContext("2d");
 const viewportStage = canvas.parentElement;
+const heroEyebrow = document.getElementById("hero-eyebrow");
+const heroIntro = document.getElementById("hero-intro");
 const generateButton = document.getElementById("generate-button");
 const generateLoreButton = document.getElementById("generate-lore-button");
 const resetButton = document.getElementById("reset-button");
+const languageLabel = document.getElementById("language-label");
+const languageButtons = Array.from(document.querySelectorAll("[data-language]"));
 const statusLabel = document.getElementById("status");
+const historyTitle = document.getElementById("history-title");
+const historySubtitle = document.getElementById("history-subtitle");
+const viewportTitle = document.getElementById("viewport-title");
+const viewportSubtitle = document.getElementById("viewport-subtitle");
 const playerPosition = document.getElementById("player-position");
+const chatEyebrow = document.getElementById("chat-eyebrow");
 const historyWindow = document.getElementById("history-window");
 const chatTitle = document.getElementById("chat-title");
 const chatDescription = document.getElementById("chat-description");
 const chatWindow = document.getElementById("chat-window");
 const chatForm = document.getElementById("chat-form");
+const chatInputLabel = document.getElementById("chat-input-label");
 const chatInput = document.getElementById("chat-input");
 const chatSendButton = document.getElementById("chat-send-button");
 const STORAGE_KEY = "ollama-rpg2:map-state:v3";
+const LANGUAGE_STORAGE_KEY = "ollama-rpg2:language";
 const MAX_CHAT_MESSAGES = 12;
 const BASE_EMOJI_FONT_SIZE = 30;
 const BASE_TILE_GAP = 4;
 const MAP_ASPECT_RATIO = 30 / 22;
+const DEFAULT_LANGUAGE = "en";
+
+const translations = {
+  en: {
+    heroEyebrow: "World Seedling",
+    languageLabel: "Language",
+    heroIntro: "Generate a 128x128 world, uncover lore as you explore a 30x22 viewport, move with WSAD and press E to chat with nearby NPCs.",
+    generateMap: "Generate Map",
+    generateLore: "Generate Lore",
+    reset: "Reset",
+    historyTitle: "History",
+    historySubtitle: "World lore and discoveries",
+    viewportTitle: "Viewport",
+    viewportSubtitle: "30 x 22 tiles",
+    playerUnknown: "Player: -, -",
+    playerPosition: "Player: {x}, {y}",
+    chatEyebrow: "Village Voices",
+    chatNoConversation: "No conversation",
+    chatWalkPrompt: "Walk next to an NPC, generate lore, then press E to talk.",
+    chatEmpty: "No NPC selected.",
+    chatStarter: "Say hello to start the conversation.",
+    chatInputLabel: "Your line",
+    chatInputPlaceholder: "Type what you want to say, then press Enter.",
+    sendLine: "Send line",
+    youLabel: "You",
+    historyEmptyLore: "Generate lore to begin your chronicle.",
+    historyEmptyMap: "Generate a map, then generate lore to begin your chronicle.",
+    worldLoreTitle: "World Lore",
+    viewportEmpty: "Generate a map to begin.",
+    canvasLabel: "Generated map viewport",
+    statusReady: "Ready to generate a world.",
+    statusGeneratingWorld: "Generating world...",
+    statusWorldReady: "World ready. Use WASD to move.",
+    statusMapFailed: "Could not generate the map.",
+    statusGenerateMapFirst: "Generate a map before generating lore.",
+    statusConsultingGm: "Consulting the GM...",
+    statusLoreRecorded: "Lore recorded. Explore the world.",
+    statusLoreFailed: "Could not generate lore.",
+    statusBlocked: "Blocked by obstacle.",
+    statusPressE: "Press E next to an NPC to start a conversation.",
+    statusGenerateLoreFirst: "Generate lore before talking to NPCs.",
+    statusListening: "Listening to {name}...",
+    statusReply: "{name} replies.",
+    statusNpcUnavailable: "Could not reach this NPC right now.",
+    statusMoveToNpc: "Move next to an NPC to talk.",
+    statusSpeaking: "Speaking with {name}.",
+    statusRestored: "Restored saved world. Use WASD to move.",
+  },
+  de: {
+    heroEyebrow: "Weltkeim",
+    languageLabel: "Sprache",
+    heroIntro: "Erzeuge eine 128x128-Welt, entdecke Lore beim Erkunden des 30x22-Viewports, bewege dich mit WSAD und druecke E, um mit nahen NPCs zu sprechen.",
+    generateMap: "Karte erzeugen",
+    generateLore: "Lore erzeugen",
+    reset: "Zuruecksetzen",
+    historyTitle: "Chronik",
+    historySubtitle: "Welt-Lore und Entdeckungen",
+    viewportTitle: "Ausschnitt",
+    viewportSubtitle: "30 x 22 Felder",
+    playerUnknown: "Spieler: -, -",
+    playerPosition: "Spieler: {x}, {y}",
+    chatEyebrow: "Stimmen des Dorfs",
+    chatNoConversation: "Kein Gespraech",
+    chatWalkPrompt: "Geh neben einen NPC, erzeuge Lore und druecke dann E, um zu sprechen.",
+    chatEmpty: "Kein NPC ausgewaehlt.",
+    chatStarter: "Sag hallo, um das Gespraech zu beginnen.",
+    chatInputLabel: "Deine Zeile",
+    chatInputPlaceholder: "Schreibe, was du sagen willst, und druecke dann Enter.",
+    sendLine: "Zeile senden",
+    youLabel: "Du",
+    historyEmptyLore: "Erzeuge Lore, um deine Chronik zu beginnen.",
+    historyEmptyMap: "Erzeuge zuerst eine Karte und dann Lore, um deine Chronik zu beginnen.",
+    worldLoreTitle: "Welt-Lore",
+    viewportEmpty: "Erzeuge eine Karte, um zu beginnen.",
+    canvasLabel: "Generierter Kartenausschnitt",
+    statusReady: "Bereit, eine Welt zu erzeugen.",
+    statusGeneratingWorld: "Welt wird erzeugt...",
+    statusWorldReady: "Welt bereit. Bewege dich mit WASD.",
+    statusMapFailed: "Die Karte konnte nicht erzeugt werden.",
+    statusGenerateMapFirst: "Erzeuge eine Karte, bevor du Lore erzeugst.",
+    statusConsultingGm: "Der Spielleiter wird befragt...",
+    statusLoreRecorded: "Lore gespeichert. Erkunde die Welt.",
+    statusLoreFailed: "Lore konnte nicht erzeugt werden.",
+    statusBlocked: "Ein Hindernis versperrt den Weg.",
+    statusPressE: "Druecke E neben einem NPC, um ein Gespraech zu beginnen.",
+    statusGenerateLoreFirst: "Erzeuge Lore, bevor du mit NPCs sprichst.",
+    statusListening: "{name} hoert zu...",
+    statusReply: "{name} antwortet.",
+    statusNpcUnavailable: "Dieser NPC ist gerade nicht erreichbar.",
+    statusMoveToNpc: "Geh neben einen NPC, um zu sprechen.",
+    statusSpeaking: "Du sprichst mit {name}.",
+    statusRestored: "Gespeicherte Welt wiederhergestellt. Bewege dich mit WASD.",
+  },
+};
 
 const state = {
+  language: DEFAULT_LANGUAGE,
   world: [],
   player: null,
   npcs: [],
@@ -47,9 +154,53 @@ const state = {
     lore: false,
     chat: false,
   },
+  status: {
+    key: "statusReady",
+    params: {},
+  },
 };
 
 let resizeFrame = null;
+
+function isValidLanguage(value) {
+  return Object.prototype.hasOwnProperty.call(translations, value);
+}
+
+function t(key, params = {}) {
+  const template = translations[state.language]?.[key] ?? translations[DEFAULT_LANGUAGE][key] ?? key;
+  return template.replace(/\{(\w+)\}/g, (_, name) => `${params[name] ?? ""}`);
+}
+
+function setStatus(key, params = {}) {
+  state.status = { key, params };
+  statusLabel.textContent = t(key, params);
+}
+
+function loadSavedLanguage() {
+  if (!storageAvailable()) {
+    return DEFAULT_LANGUAGE;
+  }
+
+  try {
+    const value = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    return isValidLanguage(value) ? value : DEFAULT_LANGUAGE;
+  } catch (error) {
+    console.warn("Could not read saved language.", error);
+    return DEFAULT_LANGUAGE;
+  }
+}
+
+function saveLanguagePreference() {
+  if (!storageAvailable()) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, state.language);
+  } catch (error) {
+    console.warn("Could not save language.", error);
+  }
+}
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -226,11 +377,13 @@ function canRestoreState(payload) {
     isStringArray(payload.adjacentNpcIds) &&
     (payload.activeNpcId === null || typeof payload.activeNpcId === "string") &&
     typeof payload.chatDraft === "string" &&
-    isValidNpcChats(payload.npcChats)
+    isValidNpcChats(payload.npcChats) &&
+    (payload.language === undefined || isValidLanguage(payload.language))
   );
 }
 
 function applyPayload(payload) {
+  state.language = isValidLanguage(payload.language) ? payload.language : state.language;
   state.world = payload.world;
   state.player = payload.player;
   state.npcs = payload.npcs;
@@ -250,6 +403,7 @@ function applyPayload(payload) {
 
 function snapshotState() {
   return {
+    language: state.language,
     world: state.world,
     player: state.player,
     npcs: state.npcs,
@@ -350,17 +504,57 @@ function cameraOrigin() {
   return { left, top };
 }
 
-function updateStatus(text) {
-  statusLabel.textContent = text;
-}
-
 function updatePlayerLabel() {
   if (!state.player) {
-    playerPosition.textContent = "Player: -, -";
+    playerPosition.textContent = t("playerUnknown");
     return;
   }
 
-  playerPosition.textContent = `Player: ${state.player.x}, ${state.player.y}`;
+  playerPosition.textContent = t("playerPosition", {
+    x: state.player.x,
+    y: state.player.y,
+  });
+}
+
+function renderStaticText() {
+  rootElement.lang = state.language;
+  heroEyebrow.textContent = t("heroEyebrow");
+  heroIntro.textContent = t("heroIntro");
+  languageLabel.textContent = t("languageLabel");
+  generateButton.textContent = t("generateMap");
+  generateLoreButton.textContent = t("generateLore");
+  resetButton.textContent = t("reset");
+  historyTitle.textContent = t("historyTitle");
+  historySubtitle.textContent = t("historySubtitle");
+  viewportTitle.textContent = t("viewportTitle");
+  viewportSubtitle.textContent = t("viewportSubtitle");
+  chatEyebrow.textContent = t("chatEyebrow");
+  chatInputLabel.textContent = t("chatInputLabel");
+  chatInput.placeholder = t("chatInputPlaceholder");
+  chatSendButton.textContent = t("sendLine");
+  canvas.setAttribute("aria-label", t("canvasLabel"));
+
+  for (const button of languageButtons) {
+    const active = button.dataset.language === state.language;
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  }
+
+  setStatus(state.status.key, state.status.params);
+}
+
+function setLanguage(language) {
+  if (!isValidLanguage(language) || language === state.language) {
+    return;
+  }
+
+  state.language = language;
+  saveLanguagePreference();
+  saveState();
+  renderStaticText();
+  updatePlayerLabel();
+  renderHistory();
+  renderChatPanel();
+  drawViewport();
 }
 
 function isTypingTarget(target) {
@@ -430,12 +624,12 @@ function renderChatPanel() {
   chatWindow.replaceChildren();
 
   if (!npc) {
-    chatTitle.textContent = "No conversation";
-    chatDescription.textContent = "Walk next to an NPC, generate lore, then press E to talk.";
+    chatTitle.textContent = t("chatNoConversation");
+    chatDescription.textContent = t("chatWalkPrompt");
     chatInput.value = state.chatDraft;
     const empty = document.createElement("p");
     empty.className = "chat-empty";
-    empty.textContent = "No NPC selected.";
+    empty.textContent = t("chatEmpty");
     chatWindow.append(empty);
     updateActionButtons();
     return;
@@ -449,14 +643,14 @@ function renderChatPanel() {
   if (transcript.length === 0) {
     const empty = document.createElement("p");
     empty.className = "chat-empty";
-    empty.textContent = "Say hello to start the conversation.";
+    empty.textContent = t("chatStarter");
     chatWindow.append(empty);
   } else {
     for (const [speaker, text] of transcript) {
       const line = document.createElement("p");
       line.className = "chat-message";
       const label = document.createElement("strong");
-      label.textContent = `${speaker === "u" ? "You" : npc.name}: `;
+      label.textContent = `${speaker === "u" ? t("youLabel") : npc.name}: `;
       line.append(label, document.createTextNode(text));
       chatWindow.append(line);
     }
@@ -613,8 +807,8 @@ function renderHistory() {
     const empty = document.createElement("p");
     empty.className = "history-empty";
     empty.textContent = hasWorld()
-      ? "Generate lore to begin your chronicle."
-      : "Generate a map, then generate lore to begin your chronicle.";
+      ? t("historyEmptyLore")
+      : t("historyEmptyMap");
     historyWindow.append(empty);
     return;
   }
@@ -624,7 +818,7 @@ function renderHistory() {
     article.className = "history-entry";
 
     const title = document.createElement("h3");
-    title.textContent = entry.title;
+    title.textContent = entry.type === "world" ? t("worldLoreTitle") : entry.title;
     article.append(title);
 
     if (entry.description) {
@@ -786,7 +980,7 @@ function drawViewport() {
     context.textAlign = "center";
     context.textBaseline = "middle";
     context.fillText(
-      "Generate a map to begin.",
+      t("viewportEmpty"),
       metrics.displayWidth / 2,
       metrics.displayHeight / 2
     );
@@ -836,7 +1030,7 @@ function scheduleViewportDraw() {
 
 async function generateMap() {
   setBusyFlag("map", true);
-  updateStatus("Generating world...");
+  setStatus("statusGeneratingWorld");
 
   try {
     const response = await fetch("/api/map/generate", { method: "POST" });
@@ -865,11 +1059,11 @@ async function generateMap() {
     renderHistory();
     renderChatPanel();
     drawViewport();
-    updateStatus("World ready. Use WASD to move.");
+    setStatus("statusWorldReady");
     setMapFocus();
   } catch (error) {
     console.error(error);
-    updateStatus("Could not generate the map.");
+    setStatus("statusMapFailed");
   } finally {
     setBusyFlag("map", false);
   }
@@ -877,12 +1071,12 @@ async function generateMap() {
 
 async function generateLore() {
   if (!hasWorld()) {
-    updateStatus("Generate a map before generating lore.");
+    setStatus("statusGenerateMapFirst");
     return;
   }
 
   setBusyFlag("lore", true);
-  updateStatus("Consulting the GM...");
+  setStatus("statusConsultingGm");
 
   try {
     const response = await fetch("/api/lore/generate", {
@@ -891,6 +1085,7 @@ async function generateLore() {
       body: JSON.stringify({
         world: state.world,
         npcs: state.npcs,
+        language: state.language,
       }),
     });
     if (!response.ok) {
@@ -899,7 +1094,7 @@ async function generateLore() {
 
     state.lore = await response.json();
     state.historyEntries = [
-      createHistoryEntry("world", "World Lore", state.lore.worldLore),
+      createHistoryEntry("world", t("worldLoreTitle"), state.lore.worldLore),
     ];
     state.discoveredVillageIds = new Set();
     state.discoveredNpcIds = new Set();
@@ -910,10 +1105,10 @@ async function generateLore() {
     renderHistory();
     renderChatPanel();
     saveState();
-    updateStatus("Lore recorded. Explore the world.");
+    setStatus("statusLoreRecorded");
   } catch (error) {
     console.error(error);
-    updateStatus("Could not generate lore.");
+    setStatus("statusLoreFailed");
   } finally {
     setBusyFlag("lore", false);
   }
@@ -922,18 +1117,19 @@ async function generateLore() {
 function resetGame() {
   if (storageAvailable()) {
     try {
-      window.localStorage.clear();
+      window.localStorage.removeItem(STORAGE_KEY);
     } catch (error) {
       console.warn("Could not clear browser storage.", error);
     }
   }
 
   resetRuntimeState();
+  saveLanguagePreference();
   updatePlayerLabel();
   renderHistory();
   renderChatPanel();
   drawViewport();
-  updateStatus("Ready to generate a world.");
+  setStatus("statusReady");
   updateActionButtons();
 }
 
@@ -951,7 +1147,7 @@ function movePlayer(dx, dy) {
     (nextX !== state.player.x || nextY !== state.player.y) &&
     (collidesWithNpc(nextX, nextY) || collidesWithTile(nextX, nextY))
   ) {
-    updateStatus("Blocked by obstacle.");
+    setStatus("statusBlocked");
     return;
   }
 
@@ -964,7 +1160,7 @@ function movePlayer(dx, dy) {
   updatePlayerLabel();
   renderChatPanel();
   drawViewport();
-  updateStatus("World ready. Use WASD to move.");
+  setStatus("statusWorldReady");
 }
 
 async function sendChatLine() {
@@ -973,12 +1169,12 @@ async function sendChatLine() {
   let shouldRestoreChatFocus = false;
 
   if (!npc) {
-    updateStatus("Press E next to an NPC to start a conversation.");
+    setStatus("statusPressE");
     return;
   }
 
   if (!state.lore) {
-    updateStatus("Generate lore before talking to NPCs.");
+    setStatus("statusGenerateLoreFirst");
     return;
   }
 
@@ -992,7 +1188,7 @@ async function sendChatLine() {
   appendNpcTranscriptEntry(npc.id, "u", playerLine);
   renderChatPanel();
   saveState();
-  updateStatus(`Listening to ${npc.name}...`);
+  setStatus("statusListening", { name: npc.name });
 
   try {
     const response = await fetch("/api/npc/chat", {
@@ -1008,6 +1204,7 @@ async function sendChatLine() {
           description: npc.description,
         },
         transcript: getNpcTranscript(npc.id),
+        language: state.language,
       }),
     });
     if (!response.ok) {
@@ -1018,11 +1215,11 @@ async function sendChatLine() {
     appendNpcTranscriptEntry(npc.id, "n", payload.reply ?? "");
     renderChatPanel();
     saveState();
-    updateStatus(`${npc.name} replies.`);
+    setStatus("statusReply", { name: npc.name });
     shouldRestoreChatFocus = true;
   } catch (error) {
     console.error(error);
-    updateStatus("Could not reach this NPC right now.");
+    setStatus("statusNpcUnavailable");
   } finally {
     setBusyFlag("chat", false);
     if (shouldRestoreChatFocus && state.activeNpcId) {
@@ -1033,13 +1230,13 @@ async function sendChatLine() {
 
 function openAdjacentNpcChat() {
   if (!state.lore) {
-    updateStatus("Generate lore before talking to NPCs.");
+    setStatus("statusGenerateLoreFirst");
     return;
   }
 
   const npc = chooseAdjacentNpc();
   if (!npc) {
-    updateStatus("Move next to an NPC to talk.");
+    setStatus("statusMoveToNpc");
     return;
   }
 
@@ -1047,12 +1244,18 @@ function openAdjacentNpcChat() {
   renderChatPanel();
   saveState();
   setChatFocus();
-  updateStatus(`Speaking with ${npc.name}.`);
+  setStatus("statusSpeaking", { name: npc.name });
 }
 
 generateButton.addEventListener("click", () => {
   generateMap();
 });
+
+for (const button of languageButtons) {
+  button.addEventListener("click", () => {
+    setLanguage(button.dataset.language ?? DEFAULT_LANGUAGE);
+  });
+}
 
 generateLoreButton.addEventListener("click", () => {
   generateLore();
@@ -1112,13 +1315,18 @@ window.addEventListener("resize", () => {
   scheduleViewportDraw();
 });
 
+state.language = loadSavedLanguage();
+renderStaticText();
+
 if (restoreSavedState()) {
+  saveLanguagePreference();
+  renderStaticText();
   initializePresenceState();
   updatePlayerLabel();
   renderHistory();
   renderChatPanel();
   drawViewport();
-  updateStatus("Restored saved world. Use WASD to move.");
+  setStatus("statusRestored");
   setMapFocus();
 } else {
   updatePlayerLabel();

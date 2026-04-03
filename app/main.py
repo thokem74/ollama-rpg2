@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response
@@ -36,6 +37,7 @@ class LoreNpcRequest(BaseModel):
 class LoreRequest(BaseModel):
     world: list[list[str]]
     npcs: list[LoreNpcRequest]
+    language: Literal["en", "de"] = "en"
 
 
 class NpcChatLoreNpc(BaseModel):
@@ -50,6 +52,7 @@ class NpcChatRequest(BaseModel):
     worldLore: str
     npc: NpcChatLoreNpc
     transcript: list[list[str]]
+    language: Literal["en", "de"] = "en"
 
 
 @app.get("/")
@@ -95,6 +98,7 @@ async def create_lore(request: LoreRequest) -> Response:
             world=request.world,
             npcs=[npc.model_dump() for npc in request.npcs],
             catalog=catalog,
+            language=request.language,
         )
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -116,6 +120,7 @@ async def create_npc_chat(request: NpcChatRequest) -> Response:
             npc=request.npc.model_dump(),
             transcript=request.transcript,
             player_line=request.playerLine,
+            language=request.language,
         )
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
