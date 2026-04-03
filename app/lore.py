@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -16,6 +17,9 @@ from app.mapgen import Village, village_payload
 BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_FILES = (BASE_DIR / ".env", BASE_DIR / ".env.example")
 DEFAULT_LORE_LOG_PATH = Path("logs/ollama_lore.jsonl")
+WORLD_LORE_TEXT_LOG_PATH = Path("logs/world_lore.txt")
+VILLAGE_LORE_TEXT_LOG_PATH = Path("logs/village_lore.txt")
+NPC_LORE_TEXT_LOG_PATH = Path("logs/npc_lore.txt")
 
 
 def _parse_env_file(path: Path) -> dict[str, str]:
@@ -93,6 +97,46 @@ def _append_lore_log_record(record: dict[str, Any]) -> None:
         if "durationMs" in record:
             details.append(f"durationMs={record['durationMs']}")
         print(f"[lore-log] {' '.join(details)}", file=sys.stderr)
+
+
+def _resolve_text_log_path(relative_path: Path) -> Path:
+    return BASE_DIR / relative_path
+
+
+def _append_text_log_line(relative_path: Path, line: str) -> None:
+    log_path = _resolve_text_log_path(relative_path)
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(_normalize_whitespace(line))
+            handle.write("\n")
+    except OSError as exc:
+        print(f"Warning: could not write lore text log to {log_path}: {exc}", file=sys.stderr)
+
+
+def _append_final_lore_text_logs(payload: dict[str, Any]) -> None:
+    timestamp = _utc_timestamp()
+    world_lore = _sanitize_text(payload.get("worldLore")) or ""
+    _append_text_log_line(WORLD_LORE_TEXT_LOG_PATH, f"{timestamp} | {world_lore}")
+
+    for village in payload.get("villages", []):
+        center = village.get("center", {})
+        _append_text_log_line(
+            VILLAGE_LORE_TEXT_LOG_PATH,
+            (
+                f"{timestamp} | id={village['id']} | center=({center.get('x')},{center.get('y')}) | "
+                f"name={village['name']} | description={village['description']}"
+            ),
+        )
+
+    for npc in payload.get("npcs", []):
+        _append_text_log_line(
+            NPC_LORE_TEXT_LOG_PATH,
+            (
+                f"{timestamp} | id={npc['id']} | pos=({npc.get('x')},{npc.get('y')}) | "
+                f"name={npc['name']} | description={npc['description']}"
+            ),
+        )
 
 
 def village_id_from_bounds(left: int, right: int, top: int, bottom: int) -> str:
@@ -202,37 +246,150 @@ def _build_world_summary(world: list[list[str]]) -> dict[str, Any]:
     }
 
 
-def _build_prompt(
-    world: list[list[str]],
-    villages: list[dict[str, Any]],
-    npcs: list[dict[str, Any]],
+def _build_world_lore_prompt(
+    world_summary: dict[str, Any],
+    village_count: int,
+    npc_count: int,
 ) -> str:
     context = {
-        "world": _build_world_summary(world),
-        "villages": villages,
-        "npcs": npcs,
+        "world": world_summary,
+        "villageCount": village_count,
+        "npcCount": npc_count,
     }
     return (
         "You are the game master for a whimsical emoji RPG world.\n"
-        "Write concise, flavorful lore for the provided world state.\n"
+        "Write concise, flavorful world lore for the provided world state.\n"
         "Return strict JSON only with this shape:\n"
-        '{'
-        '"worldLore":"string",'
-        '"villages":[{"id":"string","name":"string","description":"string"}],'
-        '"npcs":[{"id":"string","name":"string","description":"string"}]'
-        "}\n"
+        '{"worldLore":"string"}\n'
         "Rules:\n"
         "- Keep worldLore to 2-4 sentences.\n"
-        "- Keep every village and NPC description to 1 short sentence.\n"
-        "- Use every provided id exactly once in the matching array.\n"
-        "- Do not invent extra entries or extra keys.\n"
-        "- Names must be unique within villages and within npcs.\n"
+        "- Focus on the overall frontier, mood, and travel between settlements.\n"
+        "- Do not describe individual named villages or NPCs.\n"
+        "- Do not invent extra keys.\n"
         "Context:\n"
         f"{json.dumps(context, ensure_ascii=False)}"
     )
 
 
-def _call_ollama(base_url: str, model: str, prompt: str, *, log_lore: bool = False) -> str:
+def _build_village_lore_prompt(world_lore: str, village: dict[str, Any]) -> str:
+    context = {
+        "worldLore": world_lore,
+        "village": {
+            "id": village["id"],
+            "bounds": village["bounds"],
+            "center": village["center"],
+            "tileCount": village["tileCount"],
+        },
+    }
+    return (
+        "You are the game master for a whimsical emoji RPG world.\n"
+        "Write a concise name and description for exactly one village.\n"
+        "Return strict JSON only with this shape:\n"
+        '{"id":"string","name":"string","description":"string"}\n'
+        "Rules:\n"
+        "- Use the provided village id exactly.\n"
+        "- Keep the description to 1 short sentence.\n"
+        "- Do not invent extra keys.\n"
+        "Context:\n"
+        f"{json.dumps(context, ensure_ascii=False)}"
+    )
+
+
+def _build_npc_lore_prompt(world_lore: str, npc: dict[str, Any]) -> str:
+    context = {
+        "worldLore": world_lore,
+        "npc": {
+            "id": npc["id"],
+            "x": npc["x"],
+            "y": npc["y"],
+            "tile": npc["tile"],
+        },
+    }
+    return (
+        "You are the game master for a whimsical emoji RPG world.\n"
+        "Write a concise name and description for exactly one NPC.\n"
+        "Return strict JSON only with this shape:\n"
+        '{"id":"string","name":"string","description":"string"}\n'
+        "Rules:\n"
+        "- Use the provided npc id exactly.\n"
+        "- Keep the description to 1 short sentence.\n"
+        "- Do not invent extra keys.\n"
+        "Context:\n"
+        f"{json.dumps(context, ensure_ascii=False)}"
+    )
+
+
+def _build_village_repair_prompt(
+    world_lore: str,
+    village: dict[str, Any],
+    taken_names: list[str],
+) -> str:
+    context = {
+        "worldLore": world_lore,
+        "unavailableNames": taken_names,
+        "village": {
+            "id": village["id"],
+            "bounds": village["bounds"],
+            "center": village["center"],
+            "tileCount": village["tileCount"],
+        },
+    }
+    return (
+        "You are the game master for a whimsical emoji RPG world.\n"
+        "A previously generated village name collided with another village name.\n"
+        "Write a replacement name and description for exactly one village.\n"
+        "Return strict JSON only with this shape:\n"
+        '{"id":"string","name":"string","description":"string"}\n'
+        "Rules:\n"
+        "- Use the provided village id exactly.\n"
+        "- The name must not match any unavailableNames entry, case-insensitively.\n"
+        "- Keep the description to 1 short sentence.\n"
+        "- Do not invent extra keys.\n"
+        "Context:\n"
+        f"{json.dumps(context, ensure_ascii=False)}"
+    )
+
+
+def _build_npc_repair_prompt(
+    world_lore: str,
+    npc: dict[str, Any],
+    taken_names: list[str],
+) -> str:
+    context = {
+        "worldLore": world_lore,
+        "unavailableNames": taken_names,
+        "npc": {
+            "id": npc["id"],
+            "x": npc["x"],
+            "y": npc["y"],
+            "tile": npc["tile"],
+        },
+    }
+    return (
+        "You are the game master for a whimsical emoji RPG world.\n"
+        "A previously generated NPC name collided with another NPC name.\n"
+        "Write a replacement name and description for exactly one NPC.\n"
+        "Return strict JSON only with this shape:\n"
+        '{"id":"string","name":"string","description":"string"}\n'
+        "Rules:\n"
+        "- Use the provided npc id exactly.\n"
+        "- The name must not match any unavailableNames entry, case-insensitively.\n"
+        "- Keep the description to 1 short sentence.\n"
+        "- Do not invent extra keys.\n"
+        "Context:\n"
+        f"{json.dumps(context, ensure_ascii=False)}"
+    )
+
+
+def _call_ollama(
+    base_url: str,
+    model: str,
+    prompt: str,
+    *,
+    log_lore: bool = False,
+    lore_kind: str | None = None,
+    entity_id: str | None = None,
+) -> str:
     endpoint = f"{base_url.rstrip('/')}/api/generate"
     body_payload = {
         "model": model,
@@ -256,6 +413,8 @@ def _call_ollama(base_url: str, model: str, prompt: str, *, log_lore: bool = Fal
                 "event": "lore_request",
                 "endpoint": endpoint,
                 "model": model,
+                "loreKind": lore_kind,
+                "entityId": entity_id,
                 "prompt": prompt,
                 "requestBody": body_payload,
             }
@@ -276,6 +435,8 @@ def _call_ollama(base_url: str, model: str, prompt: str, *, log_lore: bool = Fal
                     "event": "lore_error",
                     "endpoint": endpoint,
                     "model": model,
+                    "loreKind": lore_kind,
+                    "entityId": entity_id,
                     "durationMs": round((perf_counter() - started_at) * 1000),
                     "errorType": type(exc).__name__,
                     "errorMessage": str(exc),
@@ -292,6 +453,8 @@ def _call_ollama(base_url: str, model: str, prompt: str, *, log_lore: bool = Fal
                 "event": "lore_response",
                 "endpoint": endpoint,
                 "model": model,
+                "loreKind": lore_kind,
+                "entityId": entity_id,
                 "durationMs": round((perf_counter() - started_at) * 1000),
                 "rawHttpPayload": raw_http_payload,
                 "responseText": text,
@@ -306,6 +469,20 @@ def _normalize_whitespace(value: str) -> str:
 
 def _parse_positive_int_setting(name: str) -> int:
     value = require_setting(name)
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise RuntimeError(f"Setting {name} must be an integer.") from exc
+
+    if parsed <= 0:
+        raise RuntimeError(f"Setting {name} must be greater than 0.")
+    return parsed
+
+
+def _parse_positive_int_setting_with_default(name: str, default: int) -> int:
+    value = get_setting(name)
+    if value is None:
+        return default
     try:
         parsed = int(value)
     except ValueError as exc:
@@ -364,6 +541,13 @@ def _sanitize_text(value: Any) -> str | None:
     return text or None
 
 
+def _normalize_name_key(value: str | None) -> str | None:
+    text = _sanitize_text(value)
+    if text is None:
+        return None
+    return text.lower()
+
+
 def _extract_json_object(raw_text: str) -> dict[str, Any]:
     try:
         payload = json.loads(raw_text)
@@ -380,6 +564,44 @@ def _extract_json_object(raw_text: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Ollama lore response must be a JSON object.")
     return payload
+
+
+def _extract_world_lore(raw_text: str) -> str:
+    payload = _extract_json_object(raw_text)
+    return _sanitize_text(payload.get("worldLore")) or ""
+
+
+def _extract_named_entry(raw_text: str, expected_id: str, kind: str) -> dict[str, str]:
+    payload = _extract_json_object(raw_text)
+    entry_id = _sanitize_text(payload.get("id"))
+    if entry_id and entry_id != expected_id:
+        raise ValueError(f"Ollama returned mismatched {kind} id.")
+
+    name = _sanitize_text(payload.get("name"))
+    description = _sanitize_text(payload.get("description"))
+    if not name or not description:
+        raise ValueError(f"Ollama returned invalid JSON {kind} lore.")
+
+    return {
+        "id": expected_id,
+        "name": name,
+        "description": description,
+    }
+
+
+def _find_duplicate_name_ids(entries: list[dict[str, str]]) -> set[str]:
+    ids_by_name: dict[str, list[str]] = {}
+    for entry in entries:
+        key = _normalize_name_key(entry.get("name"))
+        if key is None:
+            continue
+        ids_by_name.setdefault(key, []).append(entry["id"])
+
+    duplicate_ids: set[str] = set()
+    for ids in ids_by_name.values():
+        if len(ids) > 1:
+            duplicate_ids.update(ids)
+    return duplicate_ids
 
 
 def _normalize_named_entries(
@@ -484,13 +706,181 @@ async def generate_lore_payload(
         ],
         key=lambda npc: (npc["y"], npc["x"]),
     )
-
-    prompt = _build_prompt(world, villages, sorted_npcs)
     base_url = require_setting("OLLAMA_BASE_URL")
     model = require_setting("OLLAMA_GM_MODEL")
-    raw_text = _call_ollama(base_url, model, prompt, log_lore=True)
-    raw_payload = _extract_json_object(raw_text)
-    return _merge_lore(raw_payload, villages, sorted_npcs)
+    batch_size = _parse_positive_int_setting_with_default("OLLAMA_LORE_BATCH_SIZE", 3)
+    retry_count = _parse_positive_int_setting_with_default("OLLAMA_LORE_RETRY_COUNT", 1)
+    world_summary = _build_world_summary(world)
+
+    async def call_lore(
+        prompt: str,
+        *,
+        lore_kind: str,
+        entity_id: str | None = None,
+    ) -> str:
+        return await asyncio.to_thread(
+            _call_ollama,
+            base_url,
+            model,
+            prompt,
+            log_lore=True,
+            lore_kind=lore_kind,
+            entity_id=entity_id,
+        )
+
+    async def generate_world_lore() -> str:
+        prompt = _build_world_lore_prompt(world_summary, len(villages), len(sorted_npcs))
+        last_error: Exception | None = None
+        for _ in range(retry_count + 1):
+            try:
+                world_lore = _extract_world_lore(await call_lore(prompt, lore_kind="world"))
+                if world_lore:
+                    return world_lore
+                raise ValueError("Ollama returned invalid JSON world lore.")
+            except (RuntimeError, ValueError) as exc:
+                last_error = exc
+        if last_error:
+            _append_lore_log_record(
+                {
+                    "timestamp": _utc_timestamp(),
+                    "event": "lore_fallback",
+                    "loreKind": "world",
+                    "errorType": type(last_error).__name__,
+                    "errorMessage": str(last_error),
+                }
+            )
+        return _fallback_world_lore(len(villages), len(sorted_npcs))
+
+    async def generate_named_entry(
+        entity: dict[str, Any],
+        *,
+        lore_kind: str,
+    ) -> dict[str, str] | None:
+        prompt = (
+            _build_village_lore_prompt(world_lore, entity)
+            if lore_kind == "village"
+            else _build_npc_lore_prompt(world_lore, entity)
+        )
+        last_error: Exception | None = None
+        for _ in range(retry_count + 1):
+            try:
+                return _extract_named_entry(
+                    await call_lore(prompt, lore_kind=lore_kind, entity_id=entity["id"]),
+                    entity["id"],
+                    lore_kind,
+                )
+            except (RuntimeError, ValueError) as exc:
+                last_error = exc
+
+        if last_error:
+            _append_lore_log_record(
+                {
+                    "timestamp": _utc_timestamp(),
+                    "event": "lore_fallback",
+                    "loreKind": lore_kind,
+                    "entityId": entity["id"],
+                    "errorType": type(last_error).__name__,
+                    "errorMessage": str(last_error),
+                }
+            )
+        return None
+
+    async def generate_in_batches(
+        entities: list[dict[str, Any]],
+        *,
+        lore_kind: str,
+    ) -> list[dict[str, str]]:
+        results: list[dict[str, str]] = []
+        for start in range(0, len(entities), batch_size):
+            batch = entities[start : start + batch_size]
+            batch_results = await asyncio.gather(
+                *(generate_named_entry(entity, lore_kind=lore_kind) for entity in batch)
+            )
+            results.extend(result for result in batch_results if result is not None)
+        return results
+
+    async def repair_duplicate_names(
+        entities: list[dict[str, Any]],
+        entries: list[dict[str, str]],
+        *,
+        kind: str,
+    ) -> list[dict[str, str]]:
+        duplicate_ids = _find_duplicate_name_ids(entries)
+        if not duplicate_ids:
+            return entries
+
+        entries_by_id = {entry["id"]: entry for entry in entries}
+        accepted_names: set[str] = {
+            key
+            for entry in entries
+            if entry["id"] not in duplicate_ids
+            for key in [_normalize_name_key(entry.get("name"))]
+            if key is not None
+        }
+        repaired_entries: dict[str, dict[str, str]] = {
+            entry["id"]: entry for entry in entries if entry["id"] not in duplicate_ids
+        }
+
+        for entity in entities:
+            entity_id = entity["id"]
+            if entity_id not in duplicate_ids:
+                continue
+
+            if kind == "village":
+                prompt = _build_village_repair_prompt(
+                    world_lore,
+                    entity,
+                    sorted(entry["name"] for entry in repaired_entries.values()),
+                )
+                repair_kind = "village_repair"
+            else:
+                prompt = _build_npc_repair_prompt(
+                    world_lore,
+                    entity,
+                    sorted(entry["name"] for entry in repaired_entries.values()),
+                )
+                repair_kind = "npc_repair"
+
+            try:
+                repaired = _extract_named_entry(
+                    await call_lore(prompt, lore_kind=repair_kind, entity_id=entity_id),
+                    entity_id,
+                    kind,
+                )
+                repaired_key = _normalize_name_key(repaired.get("name"))
+                if repaired_key is None or repaired_key in accepted_names:
+                    raise ValueError(f"Ollama returned duplicate {kind} name during repair.")
+            except (RuntimeError, ValueError) as exc:
+                _append_lore_log_record(
+                    {
+                        "timestamp": _utc_timestamp(),
+                        "event": "lore_fallback",
+                        "loreKind": repair_kind,
+                        "entityId": entity_id,
+                        "errorType": type(exc).__name__,
+                        "errorMessage": str(exc),
+                    }
+                )
+                continue
+
+            repaired_entries[entity_id] = repaired
+            accepted_names.add(repaired_key)
+
+        return [repaired_entries[entry["id"]] for entry in entries if entry["id"] in repaired_entries]
+
+    world_lore = await generate_world_lore()
+    village_entries = await generate_in_batches(villages, lore_kind="village")
+    npc_entries = await generate_in_batches(sorted_npcs, lore_kind="npc")
+    village_entries = await repair_duplicate_names(villages, village_entries, kind="village")
+    npc_entries = await repair_duplicate_names(sorted_npcs, npc_entries, kind="npc")
+    raw_payload = {
+        "worldLore": world_lore,
+        "villages": village_entries,
+        "npcs": npc_entries,
+    }
+    merged_payload = _merge_lore(raw_payload, villages, sorted_npcs)
+    _append_final_lore_text_logs(merged_payload)
+    return merged_payload
 
 
 def _build_npc_chat_prompt(

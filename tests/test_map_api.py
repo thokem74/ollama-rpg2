@@ -2,6 +2,7 @@ import asyncio
 import json
 from collections import deque
 from datetime import datetime
+from pathlib import Path
 from urllib import error
 
 from fastapi import HTTPException
@@ -214,30 +215,38 @@ def test_lore_generate_endpoint_returns_world_village_and_npc_lore(monkeypatch) 
         for x in range(1, 3):
             world[y][x] = "🟪"
     npcs = [{"id": "npc:4:1", "x": 4, "y": 1, "tile": "🧑‍🌾"}]
+    calls: list[tuple[str | None, str | None]] = []
 
-    monkeypatch.setattr(
-        "app.lore._call_ollama",
-        lambda base_url, model, prompt, **kwargs: json.dumps(
-            {
-                "worldLore": "A patient frontier grows between fields and footpaths.",
-                "villages": [
-                    {
-                        "id": "village:1:1:2:2",
-                        "name": "Moss Hollow",
-                        "description": "A snug village where every porch faces the same market square.",
-                    }
-                ],
-                "npcs": [
-                    {
-                        "id": "npc:4:1",
-                        "name": "Toma Reed",
-                        "description": "A farmer who knows every shortcut through the valley.",
-                    }
-                ],
-            },
-            ensure_ascii=False,
-        ),
-    )
+    def fake_call_ollama(base_url, model, prompt, **kwargs):
+        calls.append((kwargs.get("lore_kind"), kwargs.get("entity_id")))
+        lore_kind = kwargs.get("lore_kind")
+        entity_id = kwargs.get("entity_id")
+        if lore_kind == "world":
+            return json.dumps(
+                {"worldLore": "A patient frontier grows between fields and footpaths."},
+                ensure_ascii=False,
+            )
+        if lore_kind == "village":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Moss Hollow",
+                    "description": "A snug village where every porch faces the same market square.",
+                },
+                ensure_ascii=False,
+            )
+        if lore_kind == "npc":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Toma Reed",
+                    "description": "A farmer who knows every shortcut through the valley.",
+                },
+                ensure_ascii=False,
+            )
+        raise AssertionError(f"Unexpected lore kind: {lore_kind}")
+
+    monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
     monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
 
@@ -265,69 +274,500 @@ def test_lore_generate_endpoint_returns_world_village_and_npc_lore(monkeypatch) 
             "description": "A farmer who knows every shortcut through the valley.",
         }
     ]
+    assert calls == [("world", None), ("village", "village:1:1:2:2"), ("npc", "npc:4:1")]
 
 
-def test_lore_generate_endpoint_rejects_malformed_ollama_output(monkeypatch) -> None:
-    world = [["🟩" for _ in range(4)] for _ in range(4)]
+def test_lore_generate_endpoint_retries_failed_entity_and_recovers(monkeypatch) -> None:
+    world = [["🟩" for _ in range(5)] for _ in range(5)]
     world[1][1] = "🟪"
     npcs = [{"id": "npc:2:1", "x": 2, "y": 1, "tile": "🧑‍🌾"}]
+    attempts = {"village": 0}
 
-    monkeypatch.setattr(
-        "app.lore._call_ollama",
-        lambda base_url, model, prompt, **kwargs: "not valid json at all",
-    )
+    def fake_call_ollama(base_url, model, prompt, **kwargs):
+        lore_kind = kwargs.get("lore_kind")
+        entity_id = kwargs.get("entity_id")
+        if lore_kind == "world":
+            return json.dumps({"worldLore": "A windy trade path ties the settlement to the road."}, ensure_ascii=False)
+        if lore_kind == "village":
+            attempts["village"] += 1
+            if attempts["village"] == 1:
+                return '{"id":"wrong","name":"Bad","description":"Bad."}'
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Bramble Post",
+                    "description": "A tiny waypoint where caravans rest before dusk.",
+                },
+                ensure_ascii=False,
+            )
+        if lore_kind == "npc":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Edda Pike",
+                    "description": "A patient guide who knows the safest roadside camps.",
+                },
+                ensure_ascii=False,
+            )
+        raise AssertionError(f"Unexpected lore kind: {lore_kind}")
+
+    monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
     monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
+    monkeypatch.setenv("OLLAMA_LORE_RETRY_COUNT", "1")
 
-    with pytest.raises(HTTPException) as exc_info:
-        asyncio.run(create_lore(LoreRequest.model_validate({"world": world, "npcs": npcs})))
+    response = asyncio.run(create_lore(LoreRequest.model_validate({"world": world, "npcs": npcs})))
+    payload = json.loads(response.body)
 
-    assert exc_info.value.status_code == 502
-    assert exc_info.value.detail == "Ollama returned invalid JSON lore."
+    assert attempts["village"] == 2
+    assert payload["villages"][0]["name"] == "Bramble Post"
+    assert payload["npcs"][0]["name"] == "Edda Pike"
 
 
-def test_lore_generate_endpoint_repairs_common_ollama_formatting_and_id_issues(monkeypatch) -> None:
+def test_lore_generate_endpoint_falls_back_after_retry_exhaustion(monkeypatch) -> None:
     world = [["🟩" for _ in range(5)] for _ in range(5)]
     world[1][1] = "🟪"
     world[1][2] = "🟪"
     npcs = [{"id": "npc:3:1", "x": 3, "y": 1, "tile": "🧑‍🌾"}]
 
-    monkeypatch.setattr(
-        "app.lore._call_ollama",
-        lambda base_url, model, prompt, **kwargs: (
-            'Here is your lore:\n'
-            + json.dumps(
+    def fake_call_ollama(base_url, model, prompt, **kwargs):
+        lore_kind = kwargs.get("lore_kind")
+        if lore_kind == "world":
+            return "not valid json at all"
+        if lore_kind in {"village", "npc"}:
+            return '{"id":"wrong-id"}'
+        raise AssertionError(f"Unexpected lore kind: {lore_kind}")
+
+    monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
+    monkeypatch.setenv("OLLAMA_LORE_RETRY_COUNT", "1")
+
+    response = asyncio.run(create_lore(LoreRequest.model_validate({"world": world, "npcs": npcs})))
+    payload = json.loads(response.body)
+
+    assert payload["worldLore"] == "A young frontier links 1 villages across the map, and 1 wandering figures carry stories between them."
+    assert payload["villages"][0]["id"] == "village:1:1:2:1"
+    assert payload["villages"][0]["name"] == "Village 1 (2,1)"
+    assert payload["villages"][0]["description"] == "A settled outpost near (2, 1) where travelers gather before crossing the frontier."
+    assert payload["npcs"][0]["id"] == "npc:3:1"
+    assert payload["npcs"][0]["name"] == "Wanderer 1 (3,1)"
+    assert payload["npcs"][0]["description"] == "A roaming local often seen near (3, 1)."
+
+
+def test_lore_generate_endpoint_preserves_order_across_batched_generation(monkeypatch) -> None:
+    world = [["🟩" for _ in range(8)] for _ in range(8)]
+    for y in range(1, 3):
+        for x in range(1, 3):
+            world[y][x] = "🟪"
+    for y in range(4, 6):
+        for x in range(4, 6):
+            world[y][x] = "🟪"
+    npcs = [
+        {"id": "npc:6:1", "x": 6, "y": 1, "tile": "🧑‍🌾"},
+        {"id": "npc:1:6", "x": 1, "y": 6, "tile": "👩‍🌾"},
+    ]
+
+    def fake_call_ollama(base_url, model, prompt, **kwargs):
+        lore_kind = kwargs.get("lore_kind")
+        entity_id = kwargs.get("entity_id")
+        if lore_kind == "world":
+            return json.dumps({"worldLore": "Roads and rumors tie the frontier together."}, ensure_ascii=False)
+        if lore_kind == "village":
+            return json.dumps(
                 {
-                    "worldLore": "A windy trade path ties the settlement to the open grasslands.",
-                    "villages": [
-                        {
-                            "name": "Bramble Post",
-                            "description": "A tiny waypoint where caravans rest before dusk.",
-                        }
-                    ],
-                    "npcs": [
-                        {
-                            "id": "wrong-id",
-                            "name": "Edda Pike",
-                            "description": "A patient guide who knows the safest roadside camps.",
-                        }
-                    ],
+                    "id": entity_id,
+                    "name": f"Village {entity_id[-1]}",
+                    "description": f"Description for {entity_id}.",
                 },
                 ensure_ascii=False,
             )
-        ),
-    )
+        if lore_kind == "npc":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": f"NPC {entity_id[-1]}",
+                    "description": f"Description for {entity_id}.",
+                },
+                ensure_ascii=False,
+            )
+        raise AssertionError(f"Unexpected lore kind: {lore_kind}")
+
+    monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
+    monkeypatch.setenv("OLLAMA_LORE_BATCH_SIZE", "2")
+
+    response = asyncio.run(create_lore(LoreRequest.model_validate({"world": world, "npcs": npcs})))
+    payload = json.loads(response.body)
+
+    assert [village["id"] for village in payload["villages"]] == [
+        "village:1:1:2:2",
+        "village:4:4:5:5",
+    ]
+    assert [npc["id"] for npc in payload["npcs"]] == ["npc:6:1", "npc:1:6"]
+    assert [village["name"] for village in payload["villages"]] == ["Village 2", "Village 5"]
+    assert [npc["name"] for npc in payload["npcs"]] == ["NPC 1", "NPC 6"]
+
+
+def test_lore_generate_repairs_duplicate_village_names(monkeypatch) -> None:
+    world = [["🟩" for _ in range(8)] for _ in range(8)]
+    for y in range(1, 3):
+        for x in range(1, 3):
+            world[y][x] = "🟪"
+    for y in range(4, 6):
+        for x in range(4, 6):
+            world[y][x] = "🟪"
+    npcs: list[dict[str, object]] = []
+    calls: list[tuple[str | None, str | None]] = []
+
+    def fake_call_ollama(base_url, model, prompt, **kwargs):
+        lore_kind = kwargs.get("lore_kind")
+        entity_id = kwargs.get("entity_id")
+        calls.append((lore_kind, entity_id))
+        if lore_kind == "world":
+            return json.dumps({"worldLore": "Quiet roads link the frontier."}, ensure_ascii=False)
+        if lore_kind == "village":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Oakrest",
+                    "description": f"Description for {entity_id}.",
+                },
+                ensure_ascii=False,
+            )
+        if lore_kind == "village_repair":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Stoneharbor",
+                    "description": f"Repaired description for {entity_id}.",
+                },
+                ensure_ascii=False,
+            )
+        raise AssertionError(f"Unexpected lore kind: {lore_kind}")
+
+    monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
     monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
 
     response = asyncio.run(create_lore(LoreRequest.model_validate({"world": world, "npcs": npcs})))
     payload = json.loads(response.body)
 
-    assert payload["worldLore"] == "A windy trade path ties the settlement to the open grasslands."
-    assert payload["villages"][0]["id"] == "village:1:1:2:1"
-    assert payload["villages"][0]["name"] == "Bramble Post"
-    assert payload["npcs"][0]["id"] == "npc:3:1"
-    assert payload["npcs"][0]["name"] == "Edda Pike"
+    assert [village["name"] for village in payload["villages"]] == ["Stoneharbor", "Village 2 (4,4)"]
+    assert ("village_repair", "village:1:1:2:2") in calls
+    assert ("village_repair", "village:4:4:5:5") in calls
+
+
+def test_lore_generate_repairs_case_insensitive_duplicate_npc_names(monkeypatch) -> None:
+    world = [["🟩" for _ in range(8)] for _ in range(8)]
+    world[1][1] = "🟪"
+    npcs = [
+        {"id": "npc:2:1", "x": 2, "y": 1, "tile": "🧑‍🌾"},
+        {"id": "npc:4:1", "x": 4, "y": 1, "tile": "👩‍🌾"},
+    ]
+    calls: list[tuple[str | None, str | None]] = []
+
+    def fake_call_ollama(base_url, model, prompt, **kwargs):
+        lore_kind = kwargs.get("lore_kind")
+        entity_id = kwargs.get("entity_id")
+        calls.append((lore_kind, entity_id))
+        if lore_kind == "world":
+            return json.dumps({"worldLore": "The frontier is alive with rumor."}, ensure_ascii=False)
+        if lore_kind == "village":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Hillview",
+                    "description": "A village at the edge of the road.",
+                },
+                ensure_ascii=False,
+            )
+        if lore_kind == "npc":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Mira" if entity_id == "npc:2:1" else "mira",
+                    "description": f"Description for {entity_id}.",
+                },
+                ensure_ascii=False,
+            )
+        if lore_kind == "npc_repair":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Tobin",
+                    "description": f"Repaired description for {entity_id}.",
+                },
+                ensure_ascii=False,
+            )
+        raise AssertionError(f"Unexpected lore kind: {lore_kind}")
+
+    monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
+
+    response = asyncio.run(create_lore(LoreRequest.model_validate({"world": world, "npcs": npcs})))
+    payload = json.loads(response.body)
+
+    assert [npc["name"] for npc in payload["npcs"]] == ["Tobin", "Wanderer 2 (4,1)"]
+    assert ("npc_repair", "npc:2:1") in calls
+    assert ("npc_repair", "npc:4:1") in calls
+
+
+def test_lore_generate_falls_back_when_repair_name_still_duplicates(monkeypatch) -> None:
+    world = [["🟩" for _ in range(8)] for _ in range(8)]
+    world[1][1] = "🟪"
+    npcs = [
+        {"id": "npc:2:1", "x": 2, "y": 1, "tile": "🧑‍🌾"},
+        {"id": "npc:4:1", "x": 4, "y": 1, "tile": "👩‍🌾"},
+    ]
+
+    def fake_call_ollama(base_url, model, prompt, **kwargs):
+        lore_kind = kwargs.get("lore_kind")
+        entity_id = kwargs.get("entity_id")
+        if lore_kind == "world":
+            return json.dumps({"worldLore": "A patient frontier grows between fields and footpaths."}, ensure_ascii=False)
+        if lore_kind == "village":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Moss Hollow",
+                    "description": "A snug village where every porch faces the same market square.",
+                },
+                ensure_ascii=False,
+            )
+        if lore_kind == "npc":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Tobin",
+                    "description": "A farmer who knows every shortcut through the valley.",
+                },
+                ensure_ascii=False,
+            )
+        if lore_kind == "npc_repair":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Tobin",
+                    "description": "Another duplicated name.",
+                },
+                ensure_ascii=False,
+            )
+        raise AssertionError(f"Unexpected lore kind: {lore_kind}")
+
+    monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
+
+    response = asyncio.run(create_lore(LoreRequest.model_validate({"world": world, "npcs": npcs})))
+    payload = json.loads(response.body)
+
+    assert payload["villages"][0]["name"] == "Moss Hollow"
+    assert [npc["name"] for npc in payload["npcs"]] == ["Tobin", "Wanderer 2 (4,1)"]
+
+
+def test_lore_generate_falls_back_when_repair_response_is_invalid(monkeypatch) -> None:
+    world = [["🟩" for _ in range(8)] for _ in range(8)]
+    world[1][1] = "🟪"
+    npcs = [
+        {"id": "npc:2:1", "x": 2, "y": 1, "tile": "🧑‍🌾"},
+        {"id": "npc:4:1", "x": 4, "y": 1, "tile": "👩‍🌾"},
+    ]
+
+    def fake_call_ollama(base_url, model, prompt, **kwargs):
+        lore_kind = kwargs.get("lore_kind")
+        entity_id = kwargs.get("entity_id")
+        if lore_kind == "world":
+            return json.dumps({"worldLore": "Rumor and trade fill the roads."}, ensure_ascii=False)
+        if lore_kind == "village":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Hillview",
+                    "description": "A village at the edge of the road.",
+                },
+                ensure_ascii=False,
+            )
+        if lore_kind == "npc":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Mira" if entity_id == "npc:2:1" else "mira",
+                    "description": f"Description for {entity_id}.",
+                },
+                ensure_ascii=False,
+            )
+        if lore_kind == "npc_repair":
+            return '{"id":"wrong-id"}'
+        raise AssertionError(f"Unexpected lore kind: {lore_kind}")
+
+    monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
+
+    response = asyncio.run(create_lore(LoreRequest.model_validate({"world": world, "npcs": npcs})))
+    payload = json.loads(response.body)
+
+    assert [npc["name"] for npc in payload["npcs"]] == ["Wanderer 1 (2,1)", "Wanderer 2 (4,1)"]
+
+
+def test_lore_generate_writes_human_readable_text_logs(monkeypatch, tmp_path) -> None:
+    world = [["🟩" for _ in range(6)] for _ in range(6)]
+    for y in range(1, 3):
+        for x in range(1, 3):
+            world[y][x] = "🟪"
+    npcs = [{"id": "npc:4:1", "x": 4, "y": 1, "tile": "🧑‍🌾"}]
+
+    def fake_call_ollama(base_url, model, prompt, **kwargs):
+        lore_kind = kwargs.get("lore_kind")
+        entity_id = kwargs.get("entity_id")
+        if lore_kind == "world":
+            return json.dumps(
+                {"worldLore": "A patient frontier grows\nbetween fields and footpaths."},
+                ensure_ascii=False,
+            )
+        if lore_kind == "village":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Moss Hollow",
+                    "description": "A snug village\nwhere every porch faces the same market square.",
+                },
+                ensure_ascii=False,
+            )
+        if lore_kind == "npc":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Toma Reed",
+                    "description": "A farmer\nwho knows every shortcut through the valley.",
+                },
+                ensure_ascii=False,
+            )
+        raise AssertionError(f"Unexpected lore kind: {lore_kind}")
+
+    monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
+    monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
+
+    asyncio.run(create_lore(LoreRequest.model_validate({"world": world, "npcs": npcs})))
+
+    world_lines = (tmp_path / "logs/world_lore.txt").read_text(encoding="utf-8").splitlines()
+    village_lines = (tmp_path / "logs/village_lore.txt").read_text(encoding="utf-8").splitlines()
+    npc_lines = (tmp_path / "logs/npc_lore.txt").read_text(encoding="utf-8").splitlines()
+
+    assert len(world_lines) == 1
+    assert len(village_lines) == 1
+    assert len(npc_lines) == 1
+    assert " | A patient frontier grows between fields and footpaths." in world_lines[0]
+    assert "id=village:1:1:2:2 | center=(2,2) | name=Moss Hollow | description=A snug village where every porch faces the same market square." in village_lines[0]
+    assert "id=npc:4:1 | pos=(4,1) | name=Toma Reed | description=A farmer who knows every shortcut through the valley." in npc_lines[0]
+    for line in world_lines + village_lines + npc_lines:
+        timestamp = line.split(" | ", 1)[0]
+        assert timestamp.endswith("Z")
+        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+
+
+def test_lore_text_logs_reflect_final_repaired_and_fallback_names(monkeypatch, tmp_path) -> None:
+    world = [["🟩" for _ in range(8)] for _ in range(8)]
+    world[1][1] = "🟪"
+    npcs = [
+        {"id": "npc:2:1", "x": 2, "y": 1, "tile": "🧑‍🌾"},
+        {"id": "npc:4:1", "x": 4, "y": 1, "tile": "👩‍🌾"},
+    ]
+
+    def fake_call_ollama(base_url, model, prompt, **kwargs):
+        lore_kind = kwargs.get("lore_kind")
+        entity_id = kwargs.get("entity_id")
+        if lore_kind == "world":
+            return json.dumps({"worldLore": "Rumor and trade fill the roads."}, ensure_ascii=False)
+        if lore_kind == "village":
+            return json.dumps(
+                {"id": entity_id, "name": "Hillview", "description": "A village at the edge of the road."},
+                ensure_ascii=False,
+            )
+        if lore_kind == "npc":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Mira" if entity_id == "npc:2:1" else "mira",
+                    "description": f"Description for {entity_id}.",
+                },
+                ensure_ascii=False,
+            )
+        if lore_kind == "npc_repair":
+            return '{"id":"wrong-id"}'
+        raise AssertionError(f"Unexpected lore kind: {lore_kind}")
+
+    monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
+    monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
+
+    asyncio.run(create_lore(LoreRequest.model_validate({"world": world, "npcs": npcs})))
+
+    village_lines = (tmp_path / "logs/village_lore.txt").read_text(encoding="utf-8").splitlines()
+    npc_lines = (tmp_path / "logs/npc_lore.txt").read_text(encoding="utf-8").splitlines()
+
+    assert "name=Hillview" in village_lines[0]
+    assert "name=Wanderer 1 (2,1)" in npc_lines[0]
+    assert "name=Wanderer 2 (4,1)" in npc_lines[1]
+
+
+def test_lore_generate_survives_human_readable_log_write_failure(monkeypatch, tmp_path) -> None:
+    world = [["🟩" for _ in range(6)] for _ in range(6)]
+    for y in range(1, 3):
+        for x in range(1, 3):
+            world[y][x] = "🟪"
+    npcs = [{"id": "npc:4:1", "x": 4, "y": 1, "tile": "🧑‍🌾"}]
+
+    def fake_call_ollama(base_url, model, prompt, **kwargs):
+        lore_kind = kwargs.get("lore_kind")
+        entity_id = kwargs.get("entity_id")
+        if lore_kind == "world":
+            return json.dumps({"worldLore": "A patient frontier grows between fields and footpaths."}, ensure_ascii=False)
+        if lore_kind == "village":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Moss Hollow",
+                    "description": "A snug village where every porch faces the same market square.",
+                },
+                ensure_ascii=False,
+            )
+        if lore_kind == "npc":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Toma Reed",
+                    "description": "A farmer who knows every shortcut through the valley.",
+                },
+                ensure_ascii=False,
+            )
+        raise AssertionError(f"Unexpected lore kind: {lore_kind}")
+
+    original_open = Path.open
+
+    def fake_open(self: Path, *args, **kwargs):
+        if self.name in {"world_lore.txt", "village_lore.txt", "npc_lore.txt"}:
+            raise OSError("disk full")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
+    monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
+    monkeypatch.setattr(Path, "open", fake_open)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
+
+    response = asyncio.run(create_lore(LoreRequest.model_validate({"world": world, "npcs": npcs})))
+    payload = json.loads(response.body)
+
+    assert payload["worldLore"] == "A patient frontier grows between fields and footpaths."
+    assert payload["villages"][0]["name"] == "Moss Hollow"
+    assert payload["npcs"][0]["name"] == "Toma Reed"
 
 
 def test_call_ollama_logs_lore_request_and_response(monkeypatch, tmp_path) -> None:
@@ -351,7 +791,14 @@ def test_call_ollama_logs_lore_request_and_response(monkeypatch, tmp_path) -> No
     monkeypatch.setattr(lore.request, "urlopen", lambda req, timeout=60: FakeResponse())
 
     prompt = "Write concise lore."
-    text = lore._call_ollama("http://ollama.test", "gm-model", prompt, log_lore=True)
+    text = lore._call_ollama(
+        "http://ollama.test",
+        "gm-model",
+        prompt,
+        log_lore=True,
+        lore_kind="village",
+        entity_id="village:1:1:2:2",
+    )
 
     assert '"worldLore":"A bright path crosses the valley."' in text
 
@@ -362,9 +809,13 @@ def test_call_ollama_logs_lore_request_and_response(monkeypatch, tmp_path) -> No
     assert [record["event"] for record in records] == ["lore_request", "lore_response"]
     assert records[0]["endpoint"] == "http://ollama.test/api/generate"
     assert records[0]["model"] == "gm-model"
+    assert records[0]["loreKind"] == "village"
+    assert records[0]["entityId"] == "village:1:1:2:2"
     assert records[0]["prompt"] == prompt
     assert records[0]["requestBody"]["prompt"] == prompt
     assert records[1]["rawHttpPayload"]
+    assert records[1]["loreKind"] == "village"
+    assert records[1]["entityId"] == "village:1:1:2:2"
     assert records[1]["responseText"] == text
     assert isinstance(records[1]["durationMs"], int)
     assert records[1]["durationMs"] >= 0
@@ -382,15 +833,58 @@ def test_call_ollama_logs_lore_errors(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(lore.request, "urlopen", fake_urlopen)
 
     with pytest.raises(RuntimeError) as exc_info:
-        lore._call_ollama("http://ollama.test", "gm-model", "Prompt", log_lore=True)
+        lore._call_ollama(
+            "http://ollama.test",
+            "gm-model",
+            "Prompt",
+            log_lore=True,
+            lore_kind="npc",
+            entity_id="npc:2:3",
+        )
 
     assert exc_info.value.args[0] == "Could not reach Ollama at http://ollama.test/api/generate."
 
     records = [json.loads(line) for line in (tmp_path / "errors.jsonl").read_text(encoding="utf-8").splitlines()]
     assert [record["event"] for record in records] == ["lore_request", "lore_error"]
+    assert records[0]["loreKind"] == "npc"
+    assert records[0]["entityId"] == "npc:2:3"
+    assert records[1]["loreKind"] == "npc"
+    assert records[1]["entityId"] == "npc:2:3"
     assert records[1]["errorType"] == "URLError"
     assert "connection refused" in records[1]["errorMessage"]
     assert isinstance(records[1]["durationMs"], int)
+
+
+def test_call_ollama_logs_repair_lore_kinds(monkeypatch, tmp_path) -> None:
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {"response": '{"id":"npc:4:1","name":"Tobin","description":"A watchful local."}'},
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    monkeypatch.setenv("OLLAMA_LORE_LOG_ENABLED", "true")
+    monkeypatch.setenv("OLLAMA_LORE_LOG_PATH", str(tmp_path / "repair.jsonl"))
+    monkeypatch.setattr(lore.request, "urlopen", lambda req, timeout=60: FakeResponse())
+
+    lore._call_ollama(
+        "http://ollama.test",
+        "gm-model",
+        "Prompt",
+        log_lore=True,
+        lore_kind="npc_repair",
+        entity_id="npc:4:1",
+    )
+
+    records = [json.loads(line) for line in (tmp_path / "repair.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [record["loreKind"] for record in records] == ["npc_repair", "npc_repair"]
+    assert [record["entityId"] for record in records] == ["npc:4:1", "npc:4:1"]
 
 
 def test_call_ollama_skips_logging_when_disabled(monkeypatch, tmp_path) -> None:
