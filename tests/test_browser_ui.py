@@ -228,10 +228,14 @@ def test_browser_uses_full_window_and_resizes_map() -> None:
               const shell = document.querySelector(".app-shell");
               const canvas = document.querySelector("#map-canvas");
               const worldLayout = document.querySelector(".world-layout");
+              const historyPanel = document.querySelector(".history-panel");
+              const chatPanel = document.querySelector(".chat-panel");
               return {
                 shellWidth: shell.getBoundingClientRect().width,
                 canvasWidth: canvas.getBoundingClientRect().width,
                 worldHeight: worldLayout.getBoundingClientRect().height,
+                historyPanelHeight: historyPanel.getBoundingClientRect().height,
+                chatPanelHeight: chatPanel.getBoundingClientRect().height,
                 windowHeight: window.innerHeight,
               };
             }
@@ -242,7 +246,7 @@ def test_browser_uses_full_window_and_resizes_map() -> None:
         assert initial_layout["canvasWidth"] > 720
         assert initial_layout["worldHeight"] > initial_layout["windowHeight"] * 0.6
 
-        page.set_viewport_size({"width": 1320, "height": 900})
+        page.set_viewport_size({"width": 1320, "height": 980})
         page.wait_for_function(
             """
             () => {
@@ -255,7 +259,21 @@ def test_browser_uses_full_window_and_resizes_map() -> None:
         resized_canvas_width = page.locator("#map-canvas").evaluate(
             "(node) => node.getBoundingClientRect().width"
         )
+        resized_panel_heights = page.evaluate(
+            """
+            () => {
+              const historyPanel = document.querySelector(".history-panel");
+              const chatPanel = document.querySelector(".chat-panel");
+              return {
+                historyPanelHeight: historyPanel.getBoundingClientRect().height,
+                chatPanelHeight: chatPanel.getBoundingClientRect().height,
+              };
+            }
+            """
+        )
         assert resized_canvas_width < initial_layout["canvasWidth"]
+        assert abs(resized_panel_heights["historyPanelHeight"] - initial_layout["historyPanelHeight"]) <= 2
+        assert abs(resized_panel_heights["chatPanelHeight"] - initial_layout["chatPanelHeight"]) <= 2
 
         page.keyboard.press("d")
         page.wait_for_function(
@@ -564,6 +582,59 @@ def test_browser_stacks_without_horizontal_overflow_on_small_screens() -> None:
         assert layout["bodyScrollWidth"] <= layout["windowWidth"]
         assert layout["historyTop"] < layout["viewportTop"] < layout["chatTop"]
         assert layout["canvasWidth"] <= layout["viewportWidth"]
+        assert len(request_log) == 0
+
+        browser.close()
+
+
+def test_browser_side_panels_scroll_without_resizing() -> None:
+    with sync_playwright() as playwright:
+        browser = _launch_browser(playwright)
+        page = browser.new_page(viewport={"width": 1680, "height": 980})
+        request_log: list[str] = []
+        _install_app_routes(page, request_log)
+        page.goto("http://ui.test/", wait_until="load")
+
+        layout = page.evaluate(
+            """
+            () => {
+              const historyPanel = document.querySelector(".history-panel");
+              const chatPanel = document.querySelector(".chat-panel");
+              const historyWindow = document.querySelector("#history-window");
+              const chatWindow = document.querySelector("#chat-window");
+              const chatForm = document.querySelector("#chat-form");
+
+              for (let index = 0; index < 24; index += 1) {
+                const historyEntry = document.createElement("article");
+                historyEntry.className = "history-entry";
+                historyEntry.innerHTML = `<h3>Entry ${index}</h3><p>Overflow content ${index}</p>`;
+                historyWindow.append(historyEntry);
+
+                const message = document.createElement("p");
+                message.className = "chat-message";
+                message.textContent = `Message ${index} `.repeat(8);
+                chatWindow.append(message);
+              }
+
+              return {
+                historyPanelHeight: historyPanel.getBoundingClientRect().height,
+                chatPanelHeight: chatPanel.getBoundingClientRect().height,
+                historyClientHeight: historyWindow.clientHeight,
+                historyScrollHeight: historyWindow.scrollHeight,
+                chatClientHeight: chatWindow.clientHeight,
+                chatScrollHeight: chatWindow.scrollHeight,
+                chatFormBottom: chatForm.getBoundingClientRect().bottom,
+                chatPanelBottom: chatPanel.getBoundingClientRect().bottom,
+              };
+            }
+            """
+        )
+
+        assert 680 <= layout["historyPanelHeight"] <= 780
+        assert 680 <= layout["chatPanelHeight"] <= 780
+        assert layout["historyScrollHeight"] > layout["historyClientHeight"]
+        assert layout["chatScrollHeight"] > layout["chatClientHeight"]
+        assert layout["chatFormBottom"] <= layout["chatPanelBottom"]
         assert len(request_log) == 0
 
         browser.close()
