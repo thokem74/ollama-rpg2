@@ -56,13 +56,15 @@ HTML_SHELL = """
             </div>
             <div id="player-position">Player: -, -</div>
           </div>
-          <canvas
-            id="map-canvas"
-            width="1020"
-            height="748"
-            tabindex="0"
-            aria-label="Generated map viewport"
-          ></canvas>
+          <div class="viewport-stage">
+            <canvas
+              id="map-canvas"
+              width="1020"
+              height="748"
+              tabindex="0"
+              aria-label="Generated map viewport"
+            ></canvas>
+          </div>
         </section>
 
         <aside class="chat-panel">
@@ -204,6 +206,66 @@ def _parse_position(label: str) -> tuple[int, int]:
     return int(x_text), int(y_text)
 
 
+def test_browser_uses_full_window_and_resizes_map() -> None:
+    with sync_playwright() as playwright:
+        browser = _launch_browser(playwright)
+        page = browser.new_page(viewport={"width": 1680, "height": 980})
+        request_log: list[str] = []
+        _install_app_routes(page, request_log)
+        page.goto("http://ui.test/", wait_until="load")
+
+        page.locator("#generate-button").click()
+        page.wait_for_function(
+            """
+            () => document.querySelector("#status")?.textContent ===
+              "World ready. Use WASD to move."
+            """
+        )
+
+        initial_layout = page.evaluate(
+            """
+            () => {
+              const shell = document.querySelector(".app-shell");
+              const canvas = document.querySelector("#map-canvas");
+              const worldLayout = document.querySelector(".world-layout");
+              return {
+                shellWidth: shell.getBoundingClientRect().width,
+                canvasWidth: canvas.getBoundingClientRect().width,
+                worldHeight: worldLayout.getBoundingClientRect().height,
+                windowHeight: window.innerHeight,
+              };
+            }
+            """
+        )
+
+        assert initial_layout["shellWidth"] > 1400
+        assert initial_layout["canvasWidth"] > 720
+        assert initial_layout["worldHeight"] > initial_layout["windowHeight"] * 0.6
+
+        page.set_viewport_size({"width": 1320, "height": 900})
+        page.wait_for_function(
+            """
+            () => {
+              const canvas = document.querySelector("#map-canvas");
+              return canvas && canvas.getBoundingClientRect().width < 900;
+            }
+            """
+        )
+
+        resized_canvas_width = page.locator("#map-canvas").evaluate(
+            "(node) => node.getBoundingClientRect().width"
+        )
+        assert resized_canvas_width < initial_layout["canvasWidth"]
+
+        page.keyboard.press("d")
+        page.wait_for_function(
+            """() => document.querySelector("#player-position")?.textContent === "Player: 9, 10" """
+        )
+        assert len(request_log) == 1
+
+        browser.close()
+
+
 def test_browser_generates_lore_tracks_history_and_persists_after_reload() -> None:
     with sync_playwright() as playwright:
         browser = _launch_browser(playwright)
@@ -255,14 +317,14 @@ def test_browser_generates_lore_tracks_history_and_persists_after_reload() -> No
         page.keyboard.press("a")
         page.wait_for_function("""() => document.querySelector("#player-position")?.textContent === "Player: 8, 10" """)
         page.keyboard.press("d")
-        page.wait_for_function("""() => document.querySelector("#history-window .history-entry").length === 3""")
+        page.wait_for_function("""() => document.querySelectorAll("#history-window .history-entry").length === 3""")
         assert page.locator("#history-window .history-entry h3").nth(2).text_content() == "Sunrest"
         assert page.locator("#history-window .history-entry").nth(2).locator("p").count() == 0
 
         page.keyboard.press("d")
         page.wait_for_function("""() => document.querySelector("#player-position")?.textContent === "Player: 10, 10" """)
         page.keyboard.press("d")
-        page.wait_for_function("""() => document.querySelector("#history-window .history-entry").length === 4""")
+        page.wait_for_function("""() => document.querySelectorAll("#history-window .history-entry").length === 4""")
         assert page.locator("#history-window .history-entry h3").nth(3).text_content() == "Mira Fen"
         assert (
             page.locator("#history-window .history-entry p").nth(2).text_content()
@@ -272,7 +334,7 @@ def test_browser_generates_lore_tracks_history_and_persists_after_reload() -> No
         page.keyboard.press("a")
         page.wait_for_function("""() => document.querySelector("#player-position")?.textContent === "Player: 10, 10" """)
         page.keyboard.press("d")
-        page.wait_for_function("""() => document.querySelector("#history-window .history-entry").length === 5""")
+        page.wait_for_function("""() => document.querySelectorAll("#history-window .history-entry").length === 5""")
         assert page.locator("#history-window .history-entry h3").nth(4).text_content() == "Mira Fen"
         assert page.locator("#history-window .history-entry").nth(4).locator("p").count() == 0
 
@@ -319,6 +381,8 @@ def test_browser_npc_chat_focus_and_persistence() -> None:
         page.wait_for_function("""() => document.querySelector("#player-position")?.textContent === "Player: 9, 10" """)
         page.keyboard.press("d")
         page.wait_for_function("""() => document.querySelector("#player-position")?.textContent === "Player: 10, 10" """)
+        page.keyboard.press("d")
+        page.wait_for_function("""() => document.querySelector("#player-position")?.textContent === "Player: 11, 10" """)
 
         page.keyboard.press("e")
         page.wait_for_function("""() => document.activeElement?.id === "chat-input" """)
@@ -330,11 +394,12 @@ def test_browser_npc_chat_focus_and_persistence() -> None:
 
         page.locator("#chat-input").fill("how can i help you")
         page.keyboard.press("w")
-        assert page.locator("#player-position").text_content() == "Player: 10, 10"
+        assert page.locator("#player-position").text_content() == "Player: 11, 10"
+        assert page.locator("#chat-input").input_value() == "how can i help youw"
 
         page.keyboard.press("Enter")
         page.wait_for_function("""() => document.querySelectorAll("#chat-window .chat-message").length === 2""")
-        assert page.locator("#chat-window .chat-message").nth(0).text_content() == "You: how can i help you"
+        assert page.locator("#chat-window .chat-message").nth(0).text_content() == "You: how can i help youw"
         assert (
             page.locator("#chat-window .chat-message").nth(1).text_content()
             == f"Mira Fen: {MOCK_NPC_CHAT_PAYLOAD['reply']}"
@@ -460,5 +525,44 @@ def test_browser_reset_clears_saved_world_and_history() -> None:
         assert page.locator("#player-position").text_content() == "Player: -, -"
         assert page.locator(".history-empty").text_content() == "Generate a map, then generate lore to begin your chronicle."
         assert len(request_log) == 2
+
+        browser.close()
+
+
+def test_browser_stacks_without_horizontal_overflow_on_small_screens() -> None:
+    with sync_playwright() as playwright:
+        browser = _launch_browser(playwright)
+        page = browser.new_page(viewport={"width": 820, "height": 1180})
+        request_log: list[str] = []
+        _install_app_routes(page, request_log)
+        page.goto("http://ui.test/", wait_until="load")
+
+        layout = page.evaluate(
+            """
+            () => {
+              const worldLayout = document.querySelector(".world-layout");
+              const historyPanel = document.querySelector(".history-panel");
+              const viewportPanel = document.querySelector(".viewport-panel");
+              const chatPanel = document.querySelector(".chat-panel");
+              const canvas = document.querySelector("#map-canvas");
+              return {
+                columns: getComputedStyle(worldLayout).gridTemplateColumns,
+                bodyScrollWidth: document.body.scrollWidth,
+                windowWidth: window.innerWidth,
+                historyTop: historyPanel.getBoundingClientRect().top,
+                viewportTop: viewportPanel.getBoundingClientRect().top,
+                chatTop: chatPanel.getBoundingClientRect().top,
+                canvasWidth: canvas.getBoundingClientRect().width,
+                viewportWidth: viewportPanel.getBoundingClientRect().width,
+              };
+            }
+            """
+        )
+
+        assert layout["columns"].count("px") == 1
+        assert layout["bodyScrollWidth"] <= layout["windowWidth"]
+        assert layout["historyTop"] < layout["viewportTop"] < layout["chatTop"]
+        assert layout["canvasWidth"] <= layout["viewportWidth"]
+        assert len(request_log) == 0
 
         browser.close()

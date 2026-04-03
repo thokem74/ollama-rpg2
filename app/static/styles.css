@@ -26,9 +26,13 @@ body {
 }
 
 .app-shell {
-  width: min(1100px, calc(100vw - 32px));
+  width: min(100%, 1760px);
+  min-height: 100vh;
   margin: 0 auto;
-  padding: 32px 0 40px;
+  padding: 20px 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
 
 .hero,
@@ -43,8 +47,7 @@ body {
 }
 
 .hero {
-  padding: 28px;
-  margin-bottom: 22px;
+  padding: 22px 24px;
 }
 
 .eyebrow {
@@ -63,15 +66,15 @@ p {
 }
 
 h1 {
-  font-size: clamp(2.2rem, 4vw, 3.8rem);
+  font-size: clamp(2rem, 3vw, 3.2rem);
   line-height: 1;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .intro {
-  max-width: 680px;
+  max-width: 760px;
   color: var(--muted);
-  font-size: 1.05rem;
+  font-size: 1rem;
 }
 
 .controls {
@@ -79,7 +82,7 @@ h1 {
   flex-wrap: wrap;
   align-items: center;
   gap: 14px;
-  margin-top: 22px;
+  margin-top: 18px;
 }
 
 button {
@@ -110,19 +113,33 @@ button:disabled {
 
 .world-layout {
   display: grid;
-  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) minmax(280px, 340px);
+  grid-template-columns: minmax(240px, 300px) minmax(420px, 1.8fr) minmax(280px, 340px);
   gap: 22px;
-  align-items: start;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
 }
 
 .history-panel,
 .viewport-panel,
 .chat-panel {
   padding: 22px;
+  min-height: 0;
 }
 
 .history-header {
   margin-bottom: 16px;
+}
+
+.history-panel,
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.viewport-panel {
+  display: flex;
+  flex-direction: column;
 }
 
 .history-header p,
@@ -136,8 +153,8 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-height: 748px;
-  max-height: 748px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding-right: 6px;
 }
@@ -170,11 +187,20 @@ button:disabled {
   align-items: end;
   gap: 16px;
   margin-bottom: 18px;
+  flex-wrap: wrap;
 }
 
 .viewport-header p,
 #player-position {
   color: var(--muted);
+}
+
+.viewport-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .chat-header {
@@ -185,8 +211,8 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-height: 520px;
-  max-height: 520px;
+  flex: 1;
+  min-height: 180px;
   overflow-y: auto;
   padding: 18px;
   margin-top: 18px;
@@ -213,7 +239,7 @@ button:disabled {
 
 #chat-input {
   width: 100%;
-  resize: vertical;
+  resize: none;
   border-radius: 18px;
   border: 1px solid rgba(124, 167, 70, 0.26);
   background: rgba(255, 255, 255, 0.9);
@@ -221,6 +247,7 @@ button:disabled {
   font: inherit;
   color: var(--ink);
   min-height: 110px;
+  max-height: 180px;
 }
 
 #chat-input:focus,
@@ -247,8 +274,9 @@ button:disabled {
 
 #map-canvas {
   display: block;
-  width: 100%;
-  max-width: 720px;
+  width: auto;
+  max-width: 100%;
+  max-height: 100%;
   margin: 0 auto;
   border-radius: 18px;
   border: 1px solid rgba(124, 167, 70, 0.26);
@@ -256,6 +284,46 @@ button:disabled {
     linear-gradient(180deg, rgba(255, 255, 255, 0.52), transparent 18%),
     var(--canvas);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+@media (min-width: 961px) {
+  .world-layout {
+    min-height: calc(100vh - 204px);
+  }
+}
+
+@media (max-width: 1260px) {
+  .world-layout {
+    grid-template-columns: minmax(220px, 280px) minmax(320px, 1.6fr) minmax(260px, 320px);
+  }
+}
+
+@media (max-width: 960px) {
+  .app-shell {
+    min-height: auto;
+    padding: 16px;
+    gap: 16px;
+  }
+
+  .world-layout {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .history-panel,
+  .viewport-panel,
+  .chat-panel {
+    min-height: auto;
+  }
+
+  .viewport-stage {
+    min-height: 0;
+  }
+
+  #map-canvas {
+    width: 100%;
+    height: auto;
+  }
 }
 
 @media (max-width: 760px) {

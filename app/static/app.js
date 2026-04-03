@@ -1,5 +1,6 @@
 const canvas = document.getElementById("map-canvas");
 const context = canvas.getContext("2d");
+const viewportStage = canvas.parentElement;
 const generateButton = document.getElementById("generate-button");
 const generateLoreButton = document.getElementById("generate-lore-button");
 const resetButton = document.getElementById("reset-button");
@@ -14,6 +15,9 @@ const chatInput = document.getElementById("chat-input");
 const chatSendButton = document.getElementById("chat-send-button");
 const STORAGE_KEY = "ollama-rpg2:map-state:v3";
 const MAX_CHAT_MESSAGES = 12;
+const BASE_EMOJI_FONT_SIZE = 30;
+const BASE_TILE_GAP = 4;
+const MAP_ASPECT_RATIO = 30 / 22;
 
 const state = {
   world: [],
@@ -45,9 +49,7 @@ const state = {
   },
 };
 
-const emojiFontSize = 30;
-const tileGap = 4;
-const tileStep = emojiFontSize + tileGap;
+let resizeFrame = null;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -521,9 +523,71 @@ function collidesWithTile(x, y) {
   return blockingTiles.has(tile);
 }
 
+function getViewportMetrics() {
+  const stageRect = viewportStage.getBoundingClientRect();
+  const availableWidth = Math.max(stageRect.width, 1);
+  const availableHeight = Math.max(stageRect.height, 1);
+
+  let displayWidth = availableWidth;
+  let displayHeight = displayWidth / MAP_ASPECT_RATIO;
+
+  if (displayHeight > availableHeight) {
+    displayHeight = availableHeight;
+    displayWidth = displayHeight * MAP_ASPECT_RATIO;
+  }
+
+  if (displayWidth <= 0 || displayHeight <= 0) {
+    displayWidth = state.viewport.width * (BASE_EMOJI_FONT_SIZE + BASE_TILE_GAP) - BASE_TILE_GAP;
+    displayHeight = state.viewport.height * (BASE_EMOJI_FONT_SIZE + BASE_TILE_GAP) - BASE_TILE_GAP;
+  }
+
+  const widthScale = displayWidth / (
+    state.viewport.width * (BASE_EMOJI_FONT_SIZE + BASE_TILE_GAP) - BASE_TILE_GAP
+  );
+  const heightScale = displayHeight / (
+    state.viewport.height * (BASE_EMOJI_FONT_SIZE + BASE_TILE_GAP) - BASE_TILE_GAP
+  );
+  const scale = Math.max(Math.min(widthScale, heightScale), 0.3);
+  const tileGap = BASE_TILE_GAP * scale;
+  const tileSize = BASE_EMOJI_FONT_SIZE * scale;
+  const tileStep = tileSize + tileGap;
+  const devicePixelRatio = window.devicePixelRatio || 1;
+  const canvasWidth = Math.max(Math.round(displayWidth * devicePixelRatio), 1);
+  const canvasHeight = Math.max(Math.round(displayHeight * devicePixelRatio), 1);
+
+  return {
+    canvasHeight,
+    canvasWidth,
+    devicePixelRatio,
+    displayHeight,
+    displayWidth,
+    tileGap,
+    tileSize,
+    tileStep,
+  };
+}
+
 function resizeCanvas() {
-  canvas.width = state.viewport.width * tileStep - tileGap;
-  canvas.height = state.viewport.height * tileStep - tileGap;
+  const metrics = getViewportMetrics();
+
+  canvas.style.width = `${metrics.displayWidth}px`;
+  canvas.style.height = `${metrics.displayHeight}px`;
+
+  if (canvas.width !== metrics.canvasWidth || canvas.height !== metrics.canvasHeight) {
+    canvas.width = metrics.canvasWidth;
+    canvas.height = metrics.canvasHeight;
+  }
+
+  context.setTransform(
+    metrics.devicePixelRatio,
+    0,
+    0,
+    metrics.devicePixelRatio,
+    0,
+    0
+  );
+
+  return metrics;
 }
 
 function createHistoryEntry(type, title, description, entityId) {
@@ -711,34 +775,39 @@ function processNpcDiscovery() {
 }
 
 function drawViewport() {
-  resizeCanvas();
-  context.clearRect(0, 0, canvas.width, canvas.height);
+  const metrics = resizeCanvas();
+  context.clearRect(0, 0, metrics.displayWidth, metrics.displayHeight);
 
   if (!hasWorld()) {
     context.fillStyle = "#f7f7ec";
-    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillRect(0, 0, metrics.displayWidth, metrics.displayHeight);
     context.fillStyle = "#5f8f33";
-    context.font = "24px Trebuchet MS";
+    context.font = `${Math.max(18, metrics.tileSize * 0.8)}px Trebuchet MS`;
     context.textAlign = "center";
-    context.fillText("Generate a map to begin.", canvas.width / 2, canvas.height / 2);
+    context.textBaseline = "middle";
+    context.fillText(
+      "Generate a map to begin.",
+      metrics.displayWidth / 2,
+      metrics.displayHeight / 2
+    );
     return;
   }
 
   const camera = cameraOrigin();
 
   context.fillStyle = "#f7f7ec";
-  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillRect(0, 0, metrics.displayWidth, metrics.displayHeight);
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.font = `${emojiFontSize}px 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif`;
+  context.font = `${metrics.tileSize}px 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif`;
 
   for (let row = 0; row < state.viewport.height; row += 1) {
     for (let col = 0; col < state.viewport.width; col += 1) {
       const worldX = camera.left + col;
       const worldY = camera.top + row;
       const tile = state.world[worldY][worldX];
-      const centerX = col * tileStep + emojiFontSize / 2;
-      const centerY = row * tileStep + emojiFontSize / 2;
+      const centerX = col * metrics.tileStep + metrics.tileSize / 2;
+      const centerY = row * metrics.tileStep + metrics.tileSize / 2;
 
       context.fillText(tile, centerX, centerY + 2);
 
@@ -752,6 +821,17 @@ function drawViewport() {
       }
     }
   }
+}
+
+function scheduleViewportDraw() {
+  if (resizeFrame !== null) {
+    window.cancelAnimationFrame(resizeFrame);
+  }
+
+  resizeFrame = window.requestAnimationFrame(() => {
+    resizeFrame = null;
+    drawViewport();
+  });
 }
 
 async function generateMap() {
@@ -1022,6 +1102,10 @@ window.addEventListener("keydown", (event) => {
   } else if (key === "e") {
     openAdjacentNpcChat();
   }
+});
+
+window.addEventListener("resize", () => {
+  scheduleViewportDraw();
 });
 
 if (restoreSavedState()) {
