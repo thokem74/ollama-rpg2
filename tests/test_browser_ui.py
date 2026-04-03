@@ -6,96 +6,9 @@ from playwright.sync_api import sync_playwright
 
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "app" / "static"
+INDEX_FILE = STATIC_DIR / "index.html"
 STYLES_FILE = STATIC_DIR / "styles.css"
 SCRIPT_FILE = STATIC_DIR / "app.js"
-
-HTML_SHELL = """
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ollama-rpg2</title>
-    <link rel="stylesheet" href="/static/styles.css" />
-  </head>
-  <body>
-    <main class="app-shell">
-      <section class="hero">
-        <p class="eyebrow">World Seedling</p>
-        <h1>Emoji Frontier</h1>
-        <p class="intro">
-          Generate a 128x128 world, then move the player with WASD while the
-          camera follows across a 30x22 viewport.
-        </p>
-        <div class="controls">
-          <button id="generate-button" type="button">Generate Map</button>
-          <button id="generate-lore-button" type="button">Generate Lore</button>
-          <button id="reset-button" type="button">Reset</button>
-          <span id="status">Ready to generate a world.</span>
-        </div>
-      </section>
-
-      <section class="world-layout">
-        <aside class="history-panel">
-          <div class="history-header">
-            <div>
-              <h2>History</h2>
-              <p>World lore and discoveries</p>
-            </div>
-          </div>
-          <div id="history-window" class="history-window" aria-live="polite">
-            <p class="history-empty">Generate lore to begin your chronicle.</p>
-          </div>
-        </aside>
-
-        <section class="viewport-panel">
-          <div class="viewport-header">
-            <div>
-              <h2>Viewport</h2>
-              <p>30 x 22 tiles</p>
-            </div>
-            <div id="player-position">Player: -, -</div>
-          </div>
-          <div class="viewport-stage">
-            <canvas
-              id="map-canvas"
-              width="1020"
-              height="748"
-              tabindex="0"
-              aria-label="Generated map viewport"
-            ></canvas>
-          </div>
-        </section>
-
-        <aside class="chat-panel">
-          <div class="chat-header">
-            <div>
-              <p class="eyebrow">Village Voices</p>
-              <h2 id="chat-title">No conversation</h2>
-            </div>
-          </div>
-          <p id="chat-description" class="chat-description">
-            Walk next to an NPC, generate lore, then press E to talk.
-          </p>
-          <div id="chat-window" class="chat-window" aria-live="polite">
-            <p class="chat-empty">No NPC selected.</p>
-          </div>
-          <form id="chat-form" class="chat-form">
-            <label class="sr-only" for="chat-input">Your line</label>
-            <textarea
-              id="chat-input"
-              rows="4"
-              placeholder="Type what you want to say, then press Enter."
-            ></textarea>
-            <button id="chat-send-button" type="submit">Send line</button>
-          </form>
-        </aside>
-      </section>
-    </main>
-    <script type="module" src="/static/app.js"></script>
-  </body>
-</html>
-"""
 
 MOCK_WORLD = [["🟩" for _ in range(128)] for _ in range(128)]
 for y in range(10, 13):
@@ -156,7 +69,7 @@ def _install_app_routes(page, request_log: list[str]) -> None:
     def fulfill_app(route) -> None:
         url = route.request.url
         if url == "http://ui.test/":
-            route.fulfill(status=200, content_type="text/html", body=HTML_SHELL)
+            route.fulfill(status=200, content_type="text/html", body=INDEX_FILE.read_text())
         elif url == "http://ui.test/static/styles.css":
             route.fulfill(status=200, content_type="text/css", body=STYLES_FILE.read_text())
         elif url == "http://ui.test/static/app.js":
