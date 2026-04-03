@@ -39,6 +39,12 @@ def _language_instruction(language: str) -> str:
     return f"Write every natural-language field in {_language_name(language)}.\n"
 
 
+def _npc_chat_fallback_reply(language: str) -> str:
+    if normalize_language(language) == "de":
+        return "Keine Antwort."
+    return "No reply."
+
+
 def _parse_env_file(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
@@ -1105,8 +1111,9 @@ async def generate_npc_chat_reply(
         )
         reply = _extract_npc_reply(raw_text, max_words)
     except (RuntimeError, ValueError):
-        _append_npc_chat_text_log_line(normalized_npc["name"], "[NPC chat request failed]")
-        raise
+        reply = _npc_chat_fallback_reply(normalized_language)
+        _append_npc_chat_text_log_line(normalized_npc["name"], reply)
+        return reply
 
     _append_npc_chat_text_log_line(normalized_npc["name"], reply)
     return reply
