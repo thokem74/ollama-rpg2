@@ -35,6 +35,26 @@ Map generation currently uses only the `# Ground` tiles from [assets/unicode/emo
 
 Run `pytest`.
 
+## Ollama Config
+
+The app reads its Ollama settings from `.env`.
+
+The example values in [.env.example](/home/thokem/Workspace/ollama-rpg2/.env.example) are:
+
+- `OLLAMA_BASE_URL=http://192.168.56.1:11434`
+- `OLLAMA_GM_MODEL=llama3.2:3b`
+- `OLLAMA_NPC_MODEL=llama3.2:3b`
+- `OLLAMA_NPC_MAX_WORDS=100`
+
+What they control:
+
+- `OLLAMA_BASE_URL`: the Ollama server URL used for lore generation and NPC chat
+- `OLLAMA_GM_MODEL`: the model used for world, village, and NPC lore generation
+- `OLLAMA_NPC_MODEL`: the model used for NPC conversation replies
+- `OLLAMA_NPC_MAX_WORDS`: the maximum number of words allowed in an NPC reply after normalization
+
+Copy `.env.example` to `.env` and adjust the values for your local Ollama setup.
+
 ## Enable Logging
 
 Logging is disabled by default.
