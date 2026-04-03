@@ -83,8 +83,12 @@ def _resolve_npc_chat_log_path() -> Path:
     return BASE_DIR / DEFAULT_NPC_CHAT_LOG_PATH
 
 
+def _logging_enabled() -> bool:
+    return _parse_bool_setting("APP_LOGGING_ENABLED", default=False)
+
+
 def _append_jsonl_log_record(record: dict[str, Any], *, log_path: Path, label: str) -> None:
-    if not _parse_bool_setting("OLLAMA_LORE_LOG_ENABLED", default=True):
+    if not _logging_enabled():
         return
 
     try:
@@ -95,7 +99,7 @@ def _append_jsonl_log_record(record: dict[str, Any], *, log_path: Path, label: s
     except OSError as exc:
         print(f"Warning: could not write {label} log to {log_path}: {exc}", file=sys.stderr)
 
-    if _parse_bool_setting("OLLAMA_LORE_LOG_CONSOLE", default=False):
+    if _logging_enabled() and _parse_bool_setting("OLLAMA_LORE_LOG_CONSOLE", default=False):
         details = [record.get("event", label)]
         if "model" in record:
             details.append(f"model={record['model']}")
@@ -117,6 +121,9 @@ def _resolve_text_log_path(relative_path: Path) -> Path:
 
 
 def _append_text_log_line(relative_path: Path, line: str) -> None:
+    if not _logging_enabled():
+        return
+
     log_path = _resolve_text_log_path(relative_path)
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)

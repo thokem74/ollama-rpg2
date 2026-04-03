@@ -35,6 +35,25 @@ Map generation currently uses only the `# Ground` tiles from [assets/unicode/emo
 
 Run `pytest`.
 
+## Enable Logging
+
+Logging is disabled by default.
+
+To enable all app logging, set this in your `.env`:
+
+`APP_LOGGING_ENABLED=true`
+
+You can copy the values from [.env.example](/home/thokem/Workspace/ollama-rpg2/.env.example) and then change the logging flag there.
+
+When logging is enabled, the app writes these files in `logs/`:
+
+- `ollama_lore.jsonl`
+- `ollama_npc_chat.jsonl`
+- `world_lore.txt`
+- `village_lore.txt`
+- `npc_lore.txt`
+- `npc_chat.txt`
+
 ## Lore Log Formatting
 
 If you want to inspect the lore JSONL logs more easily in VS Code, convert them into a pretty JSON array:

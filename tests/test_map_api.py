@@ -650,6 +650,7 @@ def test_lore_generate_writes_human_readable_text_logs(monkeypatch, tmp_path) ->
 
     monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
     monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
+    monkeypatch.setenv("APP_LOGGING_ENABLED", "true")
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
     monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
 
@@ -704,6 +705,7 @@ def test_lore_text_logs_reflect_final_repaired_and_fallback_names(monkeypatch, t
 
     monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
     monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
+    monkeypatch.setenv("APP_LOGGING_ENABLED", "true")
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
     monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
 
@@ -786,7 +788,7 @@ def test_call_ollama_logs_lore_request_and_response(monkeypatch, tmp_path) -> No
                 ensure_ascii=False,
             ).encode("utf-8")
 
-    monkeypatch.setenv("OLLAMA_LORE_LOG_ENABLED", "true")
+    monkeypatch.setenv("APP_LOGGING_ENABLED", "true")
     monkeypatch.setenv("OLLAMA_LORE_LOG_PATH", str(tmp_path / "custom-lore.jsonl"))
     monkeypatch.setattr(lore.request, "urlopen", lambda req, timeout=60: FakeResponse())
 
@@ -828,7 +830,7 @@ def test_call_ollama_logs_lore_errors(monkeypatch, tmp_path) -> None:
     def fake_urlopen(req, timeout=60):
         raise error.URLError("connection refused")
 
-    monkeypatch.setenv("OLLAMA_LORE_LOG_ENABLED", "true")
+    monkeypatch.setenv("APP_LOGGING_ENABLED", "true")
     monkeypatch.setenv("OLLAMA_LORE_LOG_PATH", str(tmp_path / "errors.jsonl"))
     monkeypatch.setattr(lore.request, "urlopen", fake_urlopen)
 
@@ -869,7 +871,7 @@ def test_call_ollama_logs_repair_lore_kinds(monkeypatch, tmp_path) -> None:
                 ensure_ascii=False,
             ).encode("utf-8")
 
-    monkeypatch.setenv("OLLAMA_LORE_LOG_ENABLED", "true")
+    monkeypatch.setenv("APP_LOGGING_ENABLED", "true")
     monkeypatch.setenv("OLLAMA_LORE_LOG_PATH", str(tmp_path / "repair.jsonl"))
     monkeypatch.setattr(lore.request, "urlopen", lambda req, timeout=60: FakeResponse())
 
@@ -899,13 +901,59 @@ def test_call_ollama_skips_logging_when_disabled(monkeypatch, tmp_path) -> None:
             return json.dumps({"response": '{"worldLore":"Quiet roads.","villages":[],"npcs":[]}'}, ensure_ascii=False).encode("utf-8")
 
     log_path = tmp_path / "disabled.jsonl"
-    monkeypatch.setenv("OLLAMA_LORE_LOG_ENABLED", "false")
+    monkeypatch.setenv("APP_LOGGING_ENABLED", "false")
     monkeypatch.setenv("OLLAMA_LORE_LOG_PATH", str(log_path))
     monkeypatch.setattr(lore.request, "urlopen", lambda req, timeout=60: FakeResponse())
 
     lore._call_ollama("http://ollama.test", "gm-model", "Prompt", log_lore=True)
 
     assert not log_path.exists()
+
+
+def test_all_logging_defaults_to_disabled(monkeypatch, tmp_path) -> None:
+    world = [["🟩" for _ in range(6)] for _ in range(6)]
+    for y in range(1, 3):
+        for x in range(1, 3):
+            world[y][x] = "🟪"
+    npcs = [{"id": "npc:4:1", "x": 4, "y": 1, "tile": "🧑‍🌾"}]
+
+    def fake_lore_call(base_url, model, prompt, **kwargs):
+        lore_kind = kwargs.get("lore_kind")
+        entity_id = kwargs.get("entity_id")
+        if lore_kind == "world":
+            return json.dumps({"worldLore": "A patient frontier grows between fields and footpaths."}, ensure_ascii=False)
+        if lore_kind == "village":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Moss Hollow",
+                    "description": "A snug village where every porch faces the same market square.",
+                },
+                ensure_ascii=False,
+            )
+        if lore_kind == "npc":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Toma Reed",
+                    "description": "A farmer who knows every shortcut through the valley.",
+                },
+                ensure_ascii=False,
+            )
+        raise AssertionError(f"Unexpected lore kind: {lore_kind}")
+
+    monkeypatch.delenv("APP_LOGGING_ENABLED", raising=False)
+    monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
+    monkeypatch.setattr("app.lore._call_ollama", fake_lore_call)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
+
+    asyncio.run(create_lore(LoreRequest.model_validate({"world": world, "npcs": npcs})))
+
+    assert not (tmp_path / "logs/ollama_lore.jsonl").exists()
+    assert not (tmp_path / "logs/world_lore.txt").exists()
+    assert not (tmp_path / "logs/village_lore.txt").exists()
+    assert not (tmp_path / "logs/npc_lore.txt").exists()
 
 
 def test_app_routes_include_ui_and_generation_endpoint() -> None:
@@ -1077,7 +1125,7 @@ def test_npc_chat_logs_request_and_response_to_dedicated_jsonl(monkeypatch, tmp_
                 ensure_ascii=False,
             ).encode("utf-8")
 
-    monkeypatch.setenv("OLLAMA_LORE_LOG_ENABLED", "true")
+    monkeypatch.setenv("APP_LOGGING_ENABLED", "true")
     monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
     monkeypatch.setattr(lore.request, "urlopen", lambda req, timeout=60: FakeResponse())
 
@@ -1117,7 +1165,7 @@ def test_npc_chat_logs_errors_to_dedicated_jsonl(monkeypatch, tmp_path) -> None:
     def fake_urlopen(req, timeout=60):
         raise error.URLError("connection refused")
 
-    monkeypatch.setenv("OLLAMA_LORE_LOG_ENABLED", "true")
+    monkeypatch.setenv("APP_LOGGING_ENABLED", "true")
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
     monkeypatch.setenv("OLLAMA_NPC_MODEL", "npc-model")
     monkeypatch.setenv("OLLAMA_NPC_MAX_WORDS", "12")
@@ -1183,7 +1231,7 @@ def test_lore_generation_does_not_write_to_npc_chat_jsonl(monkeypatch, tmp_path)
             )
         raise AssertionError(f"Unexpected lore kind: {lore_kind}")
 
-    monkeypatch.setenv("OLLAMA_LORE_LOG_ENABLED", "true")
+    monkeypatch.setenv("APP_LOGGING_ENABLED", "true")
     monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
     monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
@@ -1215,7 +1263,7 @@ def test_npc_chat_survives_jsonl_log_write_failure(monkeypatch, tmp_path) -> Non
             raise OSError("disk full")
         return original_open(self, *args, **kwargs)
 
-    monkeypatch.setenv("OLLAMA_LORE_LOG_ENABLED", "true")
+    monkeypatch.setenv("APP_LOGGING_ENABLED", "true")
     monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
     monkeypatch.setattr(lore.request, "urlopen", lambda req, timeout=60: FakeResponse())
     monkeypatch.setattr(Path, "open", fake_open)
@@ -1243,6 +1291,7 @@ def test_npc_chat_writes_text_log_for_successful_turn(monkeypatch, tmp_path) -> 
 
     monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
     monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
+    monkeypatch.setenv("APP_LOGGING_ENABLED", "true")
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
     monkeypatch.setenv("OLLAMA_NPC_MODEL", "npc-model")
     monkeypatch.setenv("OLLAMA_NPC_MAX_WORDS", "20")
@@ -1274,6 +1323,7 @@ def test_npc_chat_writes_failure_marker_to_text_log(monkeypatch, tmp_path) -> No
         lambda base_url, model, prompt, **kwargs: "not valid json at all",
     )
     monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
+    monkeypatch.setenv("APP_LOGGING_ENABLED", "true")
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
     monkeypatch.setenv("OLLAMA_NPC_MODEL", "npc-model")
     monkeypatch.setenv("OLLAMA_NPC_MAX_WORDS", "12")
@@ -1311,6 +1361,7 @@ def test_npc_chat_text_log_appends_multiple_npcs_to_same_file(monkeypatch, tmp_p
 
     monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
     monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
+    monkeypatch.setenv("APP_LOGGING_ENABLED", "true")
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
     monkeypatch.setenv("OLLAMA_NPC_MODEL", "npc-model")
     monkeypatch.setenv("OLLAMA_NPC_MAX_WORDS", "12")
