@@ -6,94 +6,9 @@ from playwright.sync_api import sync_playwright
 
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "app" / "static"
+INDEX_FILE = STATIC_DIR / "index.html"
 STYLES_FILE = STATIC_DIR / "styles.css"
 SCRIPT_FILE = STATIC_DIR / "app.js"
-
-HTML_SHELL = """
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ollama-rpg2</title>
-    <link rel="stylesheet" href="/static/styles.css" />
-  </head>
-  <body>
-    <main class="app-shell">
-      <section class="hero">
-        <p class="eyebrow">World Seedling</p>
-        <h1>Emoji Frontier</h1>
-        <p class="intro">
-          Generate a 128x128 world, then move the player with WASD while the
-          camera follows across a 30x22 viewport.
-        </p>
-        <div class="controls">
-          <button id="generate-button" type="button">Generate Map</button>
-          <button id="generate-lore-button" type="button">Generate Lore</button>
-          <button id="reset-button" type="button">Reset</button>
-          <span id="status">Ready to generate a world.</span>
-        </div>
-      </section>
-
-      <section class="world-layout">
-        <aside class="history-panel">
-          <div class="history-header">
-            <div>
-              <h2>History</h2>
-              <p>World lore and discoveries</p>
-            </div>
-          </div>
-          <div id="history-window" class="history-window" aria-live="polite">
-            <p class="history-empty">Generate lore to begin your chronicle.</p>
-          </div>
-        </aside>
-
-        <section class="viewport-panel">
-          <div class="viewport-header">
-            <div>
-              <h2>Viewport</h2>
-              <p>30 x 22 tiles</p>
-            </div>
-            <div id="player-position">Player: -, -</div>
-          </div>
-          <canvas
-            id="map-canvas"
-            width="1020"
-            height="748"
-            tabindex="0"
-            aria-label="Generated map viewport"
-          ></canvas>
-        </section>
-
-        <aside class="chat-panel">
-          <div class="chat-header">
-            <div>
-              <p class="eyebrow">Village Voices</p>
-              <h2 id="chat-title">No conversation</h2>
-            </div>
-          </div>
-          <p id="chat-description" class="chat-description">
-            Walk next to an NPC, generate lore, then press E to talk.
-          </p>
-          <div id="chat-window" class="chat-window" aria-live="polite">
-            <p class="chat-empty">No NPC selected.</p>
-          </div>
-          <form id="chat-form" class="chat-form">
-            <label class="sr-only" for="chat-input">Your line</label>
-            <textarea
-              id="chat-input"
-              rows="4"
-              placeholder="Type what you want to say, then press Enter."
-            ></textarea>
-            <button id="chat-send-button" type="submit">Send line</button>
-          </form>
-        </aside>
-      </section>
-    </main>
-    <script type="module" src="/static/app.js"></script>
-  </body>
-</html>
-"""
 
 MOCK_WORLD = [["🟩" for _ in range(128)] for _ in range(128)]
 for y in range(10, 13):
@@ -154,7 +69,7 @@ def _install_app_routes(page, request_log: list[str]) -> None:
     def fulfill_app(route) -> None:
         url = route.request.url
         if url == "http://ui.test/":
-            route.fulfill(status=200, content_type="text/html", body=HTML_SHELL)
+            route.fulfill(status=200, content_type="text/html", body=INDEX_FILE.read_text())
         elif url == "http://ui.test/static/styles.css":
             route.fulfill(status=200, content_type="text/css", body=STYLES_FILE.read_text())
         elif url == "http://ui.test/static/app.js":
@@ -202,6 +117,84 @@ def _parse_position(label: str) -> tuple[int, int]:
     assert label.startswith(prefix), label
     x_text, y_text = label[len(prefix) :].split(", ")
     return int(x_text), int(y_text)
+
+
+def test_browser_uses_full_window_and_resizes_map() -> None:
+    with sync_playwright() as playwright:
+        browser = _launch_browser(playwright)
+        page = browser.new_page(viewport={"width": 1680, "height": 980})
+        request_log: list[str] = []
+        _install_app_routes(page, request_log)
+        page.goto("http://ui.test/", wait_until="load")
+
+        page.locator("#generate-button").click()
+        page.wait_for_function(
+            """
+            () => document.querySelector("#status")?.textContent ===
+              "World ready. Use WASD to move."
+            """
+        )
+
+        initial_layout = page.evaluate(
+            """
+            () => {
+              const shell = document.querySelector(".app-shell");
+              const canvas = document.querySelector("#map-canvas");
+              const worldLayout = document.querySelector(".world-layout");
+              const historyPanel = document.querySelector(".history-panel");
+              const chatPanel = document.querySelector(".chat-panel");
+              return {
+                shellWidth: shell.getBoundingClientRect().width,
+                canvasWidth: canvas.getBoundingClientRect().width,
+                worldHeight: worldLayout.getBoundingClientRect().height,
+                historyPanelHeight: historyPanel.getBoundingClientRect().height,
+                chatPanelHeight: chatPanel.getBoundingClientRect().height,
+                windowHeight: window.innerHeight,
+              };
+            }
+            """
+        )
+
+        assert initial_layout["shellWidth"] > 1400
+        assert initial_layout["canvasWidth"] > 720
+        assert initial_layout["worldHeight"] > initial_layout["windowHeight"] * 0.6
+
+        page.set_viewport_size({"width": 1320, "height": 980})
+        page.wait_for_function(
+            """
+            () => {
+              const canvas = document.querySelector("#map-canvas");
+              return canvas && canvas.getBoundingClientRect().width < 900;
+            }
+            """
+        )
+
+        resized_canvas_width = page.locator("#map-canvas").evaluate(
+            "(node) => node.getBoundingClientRect().width"
+        )
+        resized_panel_heights = page.evaluate(
+            """
+            () => {
+              const historyPanel = document.querySelector(".history-panel");
+              const chatPanel = document.querySelector(".chat-panel");
+              return {
+                historyPanelHeight: historyPanel.getBoundingClientRect().height,
+                chatPanelHeight: chatPanel.getBoundingClientRect().height,
+              };
+            }
+            """
+        )
+        assert resized_canvas_width < initial_layout["canvasWidth"]
+        assert abs(resized_panel_heights["historyPanelHeight"] - initial_layout["historyPanelHeight"]) <= 2
+        assert abs(resized_panel_heights["chatPanelHeight"] - initial_layout["chatPanelHeight"]) <= 2
+
+        page.keyboard.press("d")
+        page.wait_for_function(
+            """() => document.querySelector("#player-position")?.textContent === "Player: 9, 10" """
+        )
+        assert len(request_log) == 1
+
+        browser.close()
 
 
 def test_browser_generates_lore_tracks_history_and_persists_after_reload() -> None:
@@ -255,14 +248,14 @@ def test_browser_generates_lore_tracks_history_and_persists_after_reload() -> No
         page.keyboard.press("a")
         page.wait_for_function("""() => document.querySelector("#player-position")?.textContent === "Player: 8, 10" """)
         page.keyboard.press("d")
-        page.wait_for_function("""() => document.querySelector("#history-window .history-entry").length === 3""")
+        page.wait_for_function("""() => document.querySelectorAll("#history-window .history-entry").length === 3""")
         assert page.locator("#history-window .history-entry h3").nth(2).text_content() == "Sunrest"
         assert page.locator("#history-window .history-entry").nth(2).locator("p").count() == 0
 
         page.keyboard.press("d")
         page.wait_for_function("""() => document.querySelector("#player-position")?.textContent === "Player: 10, 10" """)
         page.keyboard.press("d")
-        page.wait_for_function("""() => document.querySelector("#history-window .history-entry").length === 4""")
+        page.wait_for_function("""() => document.querySelectorAll("#history-window .history-entry").length === 4""")
         assert page.locator("#history-window .history-entry h3").nth(3).text_content() == "Mira Fen"
         assert (
             page.locator("#history-window .history-entry p").nth(2).text_content()
@@ -272,7 +265,7 @@ def test_browser_generates_lore_tracks_history_and_persists_after_reload() -> No
         page.keyboard.press("a")
         page.wait_for_function("""() => document.querySelector("#player-position")?.textContent === "Player: 10, 10" """)
         page.keyboard.press("d")
-        page.wait_for_function("""() => document.querySelector("#history-window .history-entry").length === 5""")
+        page.wait_for_function("""() => document.querySelectorAll("#history-window .history-entry").length === 5""")
         assert page.locator("#history-window .history-entry h3").nth(4).text_content() == "Mira Fen"
         assert page.locator("#history-window .history-entry").nth(4).locator("p").count() == 0
 
@@ -319,6 +312,8 @@ def test_browser_npc_chat_focus_and_persistence() -> None:
         page.wait_for_function("""() => document.querySelector("#player-position")?.textContent === "Player: 9, 10" """)
         page.keyboard.press("d")
         page.wait_for_function("""() => document.querySelector("#player-position")?.textContent === "Player: 10, 10" """)
+        page.keyboard.press("d")
+        page.wait_for_function("""() => document.querySelector("#player-position")?.textContent === "Player: 11, 10" """)
 
         page.keyboard.press("e")
         page.wait_for_function("""() => document.activeElement?.id === "chat-input" """)
@@ -330,11 +325,13 @@ def test_browser_npc_chat_focus_and_persistence() -> None:
 
         page.locator("#chat-input").fill("how can i help you")
         page.keyboard.press("w")
-        assert page.locator("#player-position").text_content() == "Player: 10, 10"
+        assert page.locator("#player-position").text_content() == "Player: 11, 10"
+        assert page.locator("#chat-input").input_value() == "how can i help youw"
 
         page.keyboard.press("Enter")
         page.wait_for_function("""() => document.querySelectorAll("#chat-window .chat-message").length === 2""")
-        assert page.locator("#chat-window .chat-message").nth(0).text_content() == "You: how can i help you"
+        page.wait_for_function("""() => document.activeElement?.id === "chat-input" """)
+        assert page.locator("#chat-window .chat-message").nth(0).text_content() == "You: how can i help youw"
         assert (
             page.locator("#chat-window .chat-message").nth(1).text_content()
             == f"Mira Fen: {MOCK_NPC_CHAT_PAYLOAD['reply']}"
@@ -460,5 +457,97 @@ def test_browser_reset_clears_saved_world_and_history() -> None:
         assert page.locator("#player-position").text_content() == "Player: -, -"
         assert page.locator(".history-empty").text_content() == "Generate a map, then generate lore to begin your chronicle."
         assert len(request_log) == 2
+
+        browser.close()
+
+
+def test_browser_stacks_without_horizontal_overflow_on_small_screens() -> None:
+    with sync_playwright() as playwright:
+        browser = _launch_browser(playwright)
+        page = browser.new_page(viewport={"width": 820, "height": 1180})
+        request_log: list[str] = []
+        _install_app_routes(page, request_log)
+        page.goto("http://ui.test/", wait_until="load")
+
+        layout = page.evaluate(
+            """
+            () => {
+              const worldLayout = document.querySelector(".world-layout");
+              const historyPanel = document.querySelector(".history-panel");
+              const viewportPanel = document.querySelector(".viewport-panel");
+              const chatPanel = document.querySelector(".chat-panel");
+              const canvas = document.querySelector("#map-canvas");
+              return {
+                columns: getComputedStyle(worldLayout).gridTemplateColumns,
+                bodyScrollWidth: document.body.scrollWidth,
+                windowWidth: window.innerWidth,
+                historyTop: historyPanel.getBoundingClientRect().top,
+                viewportTop: viewportPanel.getBoundingClientRect().top,
+                chatTop: chatPanel.getBoundingClientRect().top,
+                canvasWidth: canvas.getBoundingClientRect().width,
+                viewportWidth: viewportPanel.getBoundingClientRect().width,
+              };
+            }
+            """
+        )
+
+        assert layout["columns"].count("px") == 1
+        assert layout["bodyScrollWidth"] <= layout["windowWidth"]
+        assert layout["historyTop"] < layout["viewportTop"] < layout["chatTop"]
+        assert layout["canvasWidth"] <= layout["viewportWidth"]
+        assert len(request_log) == 0
+
+        browser.close()
+
+
+def test_browser_side_panels_scroll_without_resizing() -> None:
+    with sync_playwright() as playwright:
+        browser = _launch_browser(playwright)
+        page = browser.new_page(viewport={"width": 1680, "height": 980})
+        request_log: list[str] = []
+        _install_app_routes(page, request_log)
+        page.goto("http://ui.test/", wait_until="load")
+
+        layout = page.evaluate(
+            """
+            () => {
+              const historyPanel = document.querySelector(".history-panel");
+              const chatPanel = document.querySelector(".chat-panel");
+              const historyWindow = document.querySelector("#history-window");
+              const chatWindow = document.querySelector("#chat-window");
+              const chatForm = document.querySelector("#chat-form");
+
+              for (let index = 0; index < 24; index += 1) {
+                const historyEntry = document.createElement("article");
+                historyEntry.className = "history-entry";
+                historyEntry.innerHTML = `<h3>Entry ${index}</h3><p>Overflow content ${index}</p>`;
+                historyWindow.append(historyEntry);
+
+                const message = document.createElement("p");
+                message.className = "chat-message";
+                message.textContent = `Message ${index} `.repeat(8);
+                chatWindow.append(message);
+              }
+
+              return {
+                historyPanelHeight: historyPanel.getBoundingClientRect().height,
+                chatPanelHeight: chatPanel.getBoundingClientRect().height,
+                historyClientHeight: historyWindow.clientHeight,
+                historyScrollHeight: historyWindow.scrollHeight,
+                chatClientHeight: chatWindow.clientHeight,
+                chatScrollHeight: chatWindow.scrollHeight,
+                chatFormBottom: chatForm.getBoundingClientRect().bottom,
+                chatPanelBottom: chatPanel.getBoundingClientRect().bottom,
+              };
+            }
+            """
+        )
+
+        assert 680 <= layout["historyPanelHeight"] <= 780
+        assert 680 <= layout["chatPanelHeight"] <= 780
+        assert layout["historyScrollHeight"] > layout["historyClientHeight"]
+        assert layout["chatScrollHeight"] > layout["chatClientHeight"]
+        assert layout["chatFormBottom"] <= layout["chatPanelBottom"]
+        assert len(request_log) == 0
 
         browser.close()
