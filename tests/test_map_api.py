@@ -1235,3 +1235,151 @@ def test_npc_chat_survives_jsonl_log_write_failure(monkeypatch, tmp_path) -> Non
     )
 
     assert reply == "I can spare a little help, traveler."
+
+
+def test_npc_chat_writes_text_log_for_successful_turn(monkeypatch, tmp_path) -> None:
+    def fake_call_ollama(base_url: str, model: str, prompt: str, **kwargs) -> str:
+        return json.dumps({"reply": "Oh my starry skies!\nI can help."}, ensure_ascii=False)
+
+    monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
+    monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_NPC_MODEL", "npc-model")
+    monkeypatch.setenv("OLLAMA_NPC_MAX_WORDS", "20")
+
+    reply = asyncio.run(
+        lore.generate_npc_chat_reply(
+            npc_id="npc:4:1",
+            world_lore="A soft frontier links gardens, paths, and hill villages.",
+            npc={
+                "id": "npc:4:1",
+                "name": "Zuzu P. Fizzypop",
+                "description": "A whimsical inventor with a flair for the absurd.",
+            },
+            transcript=[],
+            player_line="hello\nthere",
+        )
+    )
+
+    assert reply == "Oh my starry skies! I can help."
+    lines = (tmp_path / "logs/npc_chat.txt").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert " | Player | hello there" in lines[0]
+    assert " | Zuzu P. Fizzypop | Oh my starry skies! I can help." in lines[1]
+
+
+def test_npc_chat_writes_failure_marker_to_text_log(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "app.lore._call_ollama",
+        lambda base_url, model, prompt, **kwargs: "not valid json at all",
+    )
+    monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_NPC_MODEL", "npc-model")
+    monkeypatch.setenv("OLLAMA_NPC_MAX_WORDS", "12")
+
+    with pytest.raises(ValueError) as exc_info:
+        asyncio.run(
+            lore.generate_npc_chat_reply(
+                npc_id="npc:3:1",
+                world_lore="A bright road crosses the frontier.",
+                npc={
+                    "id": "npc:3:1",
+                    "name": "Edda Pike",
+                    "description": "A patient guide who knows the valley.",
+                },
+                transcript=[],
+                player_line="Hello",
+            )
+        )
+
+    assert exc_info.value.args[0] == "Ollama returned invalid JSON lore."
+    lines = (tmp_path / "logs/npc_chat.txt").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert " | Player | Hello" in lines[0]
+    assert " | Edda Pike | [NPC chat request failed]" in lines[1]
+
+
+def test_npc_chat_text_log_appends_multiple_npcs_to_same_file(monkeypatch, tmp_path) -> None:
+    def fake_call_ollama(base_url: str, model: str, prompt: str, **kwargs) -> str:
+        npc_id = kwargs.get("npc_id")
+        if npc_id == "npc:4:1":
+            return json.dumps({"reply": "First reply."}, ensure_ascii=False)
+        if npc_id == "npc:7:4":
+            return json.dumps({"reply": "Second reply."}, ensure_ascii=False)
+        raise AssertionError(f"Unexpected npc_id: {npc_id}")
+
+    monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
+    monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_NPC_MODEL", "npc-model")
+    monkeypatch.setenv("OLLAMA_NPC_MAX_WORDS", "12")
+
+    asyncio.run(
+        lore.generate_npc_chat_reply(
+            npc_id="npc:4:1",
+            world_lore="A soft frontier links gardens, paths, and hill villages.",
+            npc={
+                "id": "npc:4:1",
+                "name": "Tobin",
+                "description": "A village tender who worries over the market flowers.",
+            },
+            transcript=[],
+            player_line="Can you help me?",
+        )
+    )
+    asyncio.run(
+        lore.generate_npc_chat_reply(
+            npc_id="npc:7:4",
+            world_lore="The roads are full of rumor and trade.",
+            npc={
+                "id": "npc:7:4",
+                "name": "Mira Fen",
+                "description": "A cheerful courier with news to spare.",
+            },
+            transcript=[],
+            player_line="Tell me more.",
+        )
+    )
+
+    lines = (tmp_path / "logs/npc_chat.txt").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 4
+    assert " | Player | Can you help me?" in lines[0]
+    assert " | Tobin | First reply." in lines[1]
+    assert " | Player | Tell me more." in lines[2]
+    assert " | Mira Fen | Second reply." in lines[3]
+
+
+def test_npc_chat_survives_text_log_write_failure(monkeypatch, tmp_path) -> None:
+    def fake_call_ollama(base_url: str, model: str, prompt: str, **kwargs) -> str:
+        return json.dumps({"reply": "I can spare a little help, traveler."}, ensure_ascii=False)
+
+    original_open = Path.open
+
+    def fake_open(self: Path, *args, **kwargs):
+        if self.name == "npc_chat.txt":
+            raise OSError("disk full")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
+    monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_NPC_MODEL", "npc-model")
+    monkeypatch.setenv("OLLAMA_NPC_MAX_WORDS", "12")
+    monkeypatch.setattr(Path, "open", fake_open)
+
+    reply = asyncio.run(
+        lore.generate_npc_chat_reply(
+            npc_id="npc:4:1",
+            world_lore="A soft frontier links gardens, paths, and hill villages.",
+            npc={
+                "id": "npc:4:1",
+                "name": "Tobin",
+                "description": "A village tender who worries over the market flowers.",
+            },
+            transcript=[],
+            player_line="Can you help me?",
+        )
+    )
+
+    assert reply == "I can spare a little help, traveler."

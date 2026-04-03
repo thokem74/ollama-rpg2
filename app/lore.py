@@ -21,6 +21,7 @@ DEFAULT_NPC_CHAT_LOG_PATH = Path("logs/ollama_npc_chat.jsonl")
 WORLD_LORE_TEXT_LOG_PATH = Path("logs/world_lore.txt")
 VILLAGE_LORE_TEXT_LOG_PATH = Path("logs/village_lore.txt")
 NPC_LORE_TEXT_LOG_PATH = Path("logs/npc_lore.txt")
+NPC_CHAT_TEXT_LOG_PATH = Path("logs/npc_chat.txt")
 
 
 def _parse_env_file(path: Path) -> dict[str, str]:
@@ -149,6 +150,13 @@ def _append_final_lore_text_logs(payload: dict[str, Any]) -> None:
                 f"name={npc['name']} | description={npc['description']}"
             ),
         )
+
+
+def _append_npc_chat_text_log_line(speaker: str, text: str) -> None:
+    _append_text_log_line(
+        NPC_CHAT_TEXT_LOG_PATH,
+        f"{_utc_timestamp()} | {speaker} | {text}",
+    )
 
 
 def village_id_from_bounds(left: int, right: int, top: int, bottom: int) -> str:
@@ -1025,11 +1033,19 @@ async def generate_npc_chat_reply(
         normalized_player_line,
         max_words,
     )
-    raw_text = _call_ollama(
-        base_url,
-        model,
-        prompt,
-        log_npc_chat=True,
-        npc_id=npc_id,
-    )
-    return _extract_npc_reply(raw_text, max_words)
+    _append_npc_chat_text_log_line("Player", normalized_player_line)
+    try:
+        raw_text = _call_ollama(
+            base_url,
+            model,
+            prompt,
+            log_npc_chat=True,
+            npc_id=npc_id,
+        )
+        reply = _extract_npc_reply(raw_text, max_words)
+    except (RuntimeError, ValueError):
+        _append_npc_chat_text_log_line(normalized_npc["name"], "[NPC chat request failed]")
+        raise
+
+    _append_npc_chat_text_log_line(normalized_npc["name"], reply)
+    return reply
