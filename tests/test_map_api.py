@@ -925,10 +925,12 @@ def test_app_routes_include_ui_and_generation_endpoint() -> None:
 def test_npc_chat_endpoint_returns_reply_and_uses_npc_settings(monkeypatch) -> None:
     captured: dict[str, str] = {}
 
-    def fake_call_ollama(base_url: str, model: str, prompt: str) -> str:
+    def fake_call_ollama(base_url: str, model: str, prompt: str, **kwargs) -> str:
         captured["base_url"] = base_url
         captured["model"] = model
         captured["prompt"] = prompt
+        captured["npc_id"] = kwargs.get("npc_id")
+        captured["log_npc_chat"] = kwargs.get("log_npc_chat")
         return json.dumps({"reply": "I can spare a little help, traveler."}, ensure_ascii=False)
 
     monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
@@ -958,6 +960,8 @@ def test_npc_chat_endpoint_returns_reply_and_uses_npc_settings(monkeypatch) -> N
     assert payload == {"reply": "I can spare a little help, traveler."}
     assert captured["base_url"] == "http://ollama.test"
     assert captured["model"] == "npc-model"
+    assert captured["npc_id"] == "npc:4:1"
+    assert captured["log_npc_chat"] is True
     assert '"maxWords": 7' in captured["prompt"]
     assert '"name": "Tobin"' in captured["prompt"]
 
@@ -965,7 +969,7 @@ def test_npc_chat_endpoint_returns_reply_and_uses_npc_settings(monkeypatch) -> N
 def test_npc_chat_endpoint_rejects_malformed_ollama_output(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.lore._call_ollama",
-        lambda base_url, model, prompt: "not valid json at all",
+        lambda base_url, model, prompt, **kwargs: "not valid json at all",
     )
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
     monkeypatch.setenv("OLLAMA_NPC_MODEL", "npc-model")
@@ -997,7 +1001,7 @@ def test_npc_chat_endpoint_rejects_malformed_ollama_output(monkeypatch) -> None:
 def test_npc_chat_endpoint_enforces_max_words(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.lore._call_ollama",
-        lambda base_url, model, prompt: json.dumps(
+        lambda base_url, model, prompt, **kwargs: json.dumps(
             {
                 "reply": "one two three four five six seven eight nine",
             },
@@ -1057,3 +1061,177 @@ def test_npc_chat_endpoint_requires_npc_settings(monkeypatch) -> None:
 
     assert exc_info.value.status_code == 503
     assert exc_info.value.detail == "Missing required setting: OLLAMA_NPC_MODEL"
+
+
+def test_npc_chat_logs_request_and_response_to_dedicated_jsonl(monkeypatch, tmp_path) -> None:
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {"response": '{"reply":"I can spare a little help, traveler."}'},
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    monkeypatch.setenv("OLLAMA_LORE_LOG_ENABLED", "true")
+    monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
+    monkeypatch.setattr(lore.request, "urlopen", lambda req, timeout=60: FakeResponse())
+
+    reply = asyncio.run(
+        lore.generate_npc_chat_reply(
+            npc_id="npc:4:1",
+            world_lore="A soft frontier links gardens, paths, and hill villages.",
+            npc={
+                "id": "npc:4:1",
+                "name": "Tobin",
+                "description": "A village tender who worries over the market flowers.",
+            },
+            transcript=[["u", "Hello there"], ["n", "Welcome, traveler."]],
+            player_line="Can you help me?",
+        )
+    )
+
+    assert reply == "I can spare a little help, traveler."
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "logs/ollama_npc_chat.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["event"] for record in records] == ["npc_chat_request", "npc_chat_response"]
+    assert records[0]["npcId"] == "npc:4:1"
+    assert records[0]["prompt"]
+    assert records[0]["requestBody"]["prompt"] == records[0]["prompt"]
+    assert records[1]["npcId"] == "npc:4:1"
+    assert records[1]["rawHttpPayload"]
+    assert records[1]["replyText"] == '{"reply":"I can spare a little help, traveler."}'
+    for record in records:
+        assert record["timestamp"].endswith("Z")
+        datetime.fromisoformat(record["timestamp"].replace("Z", "+00:00"))
+        assert isinstance(record.get("durationMs", 0), int) or record["event"] == "npc_chat_request"
+
+
+def test_npc_chat_logs_errors_to_dedicated_jsonl(monkeypatch, tmp_path) -> None:
+    def fake_urlopen(req, timeout=60):
+        raise error.URLError("connection refused")
+
+    monkeypatch.setenv("OLLAMA_LORE_LOG_ENABLED", "true")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_NPC_MODEL", "npc-model")
+    monkeypatch.setenv("OLLAMA_NPC_MAX_WORDS", "12")
+    monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
+    monkeypatch.setattr(lore.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        asyncio.run(
+            lore.generate_npc_chat_reply(
+                npc_id="npc:3:1",
+                world_lore="A bright road crosses the frontier.",
+                npc={
+                    "id": "npc:3:1",
+                    "name": "Edda Pike",
+                    "description": "A patient guide who knows the valley.",
+                },
+                transcript=[],
+                player_line="Hello",
+            )
+        )
+
+    assert exc_info.value.args[0] == "Could not reach Ollama at http://ollama.test/api/generate."
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "logs/ollama_npc_chat.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["event"] for record in records] == ["npc_chat_request", "npc_chat_error"]
+    assert records[0]["npcId"] == "npc:3:1"
+    assert records[1]["npcId"] == "npc:3:1"
+    assert records[1]["errorType"] == "URLError"
+    assert "connection refused" in records[1]["errorMessage"]
+
+
+def test_lore_generation_does_not_write_to_npc_chat_jsonl(monkeypatch, tmp_path) -> None:
+    world = [["🟩" for _ in range(6)] for _ in range(6)]
+    for y in range(1, 3):
+        for x in range(1, 3):
+            world[y][x] = "🟪"
+    npcs = [{"id": "npc:4:1", "x": 4, "y": 1, "tile": "🧑‍🌾"}]
+
+    def fake_call_ollama(base_url, model, prompt, **kwargs):
+        lore_kind = kwargs.get("lore_kind")
+        entity_id = kwargs.get("entity_id")
+        if lore_kind == "world":
+            return json.dumps({"worldLore": "A patient frontier grows between fields and footpaths."}, ensure_ascii=False)
+        if lore_kind == "village":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Moss Hollow",
+                    "description": "A snug village where every porch faces the same market square.",
+                },
+                ensure_ascii=False,
+            )
+        if lore_kind == "npc":
+            return json.dumps(
+                {
+                    "id": entity_id,
+                    "name": "Toma Reed",
+                    "description": "A farmer who knows every shortcut through the valley.",
+                },
+                ensure_ascii=False,
+            )
+        raise AssertionError(f"Unexpected lore kind: {lore_kind}")
+
+    monkeypatch.setenv("OLLAMA_LORE_LOG_ENABLED", "true")
+    monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
+    monkeypatch.setattr("app.lore._call_ollama", fake_call_ollama)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
+    monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
+
+    asyncio.run(create_lore(LoreRequest.model_validate({"world": world, "npcs": npcs})))
+
+    assert not (tmp_path / "logs/ollama_npc_chat.jsonl").exists()
+
+
+def test_npc_chat_survives_jsonl_log_write_failure(monkeypatch, tmp_path) -> None:
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {"response": '{"reply":"I can spare a little help, traveler."}'},
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    original_open = Path.open
+
+    def fake_open(self: Path, *args, **kwargs):
+        if self.name == "ollama_npc_chat.jsonl":
+            raise OSError("disk full")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setenv("OLLAMA_LORE_LOG_ENABLED", "true")
+    monkeypatch.setattr(lore, "BASE_DIR", tmp_path)
+    monkeypatch.setattr(lore.request, "urlopen", lambda req, timeout=60: FakeResponse())
+    monkeypatch.setattr(Path, "open", fake_open)
+
+    reply = asyncio.run(
+        lore.generate_npc_chat_reply(
+            npc_id="npc:4:1",
+            world_lore="A soft frontier links gardens, paths, and hill villages.",
+            npc={
+                "id": "npc:4:1",
+                "name": "Tobin",
+                "description": "A village tender who worries over the market flowers.",
+            },
+            transcript=[["u", "Hello there"], ["n", "Welcome, traveler."]],
+            player_line="Can you help me?",
+        )
+    )
+
+    assert reply == "I can spare a little help, traveler."

@@ -17,6 +17,7 @@ from app.mapgen import Village, village_payload
 BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_FILES = (BASE_DIR / ".env", BASE_DIR / ".env.example")
 DEFAULT_LORE_LOG_PATH = Path("logs/ollama_lore.jsonl")
+DEFAULT_NPC_CHAT_LOG_PATH = Path("logs/ollama_npc_chat.jsonl")
 WORLD_LORE_TEXT_LOG_PATH = Path("logs/world_lore.txt")
 VILLAGE_LORE_TEXT_LOG_PATH = Path("logs/village_lore.txt")
 NPC_LORE_TEXT_LOG_PATH = Path("logs/npc_lore.txt")
@@ -77,26 +78,37 @@ def _resolve_lore_log_path() -> Path:
     return path
 
 
-def _append_lore_log_record(record: dict[str, Any]) -> None:
+def _resolve_npc_chat_log_path() -> Path:
+    return BASE_DIR / DEFAULT_NPC_CHAT_LOG_PATH
+
+
+def _append_jsonl_log_record(record: dict[str, Any], *, log_path: Path, label: str) -> None:
     if not _parse_bool_setting("OLLAMA_LORE_LOG_ENABLED", default=True):
         return
 
-    log_path = _resolve_lore_log_path()
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False))
             handle.write("\n")
     except OSError as exc:
-        print(f"Warning: could not write lore log to {log_path}: {exc}", file=sys.stderr)
+        print(f"Warning: could not write {label} log to {log_path}: {exc}", file=sys.stderr)
 
     if _parse_bool_setting("OLLAMA_LORE_LOG_CONSOLE", default=False):
-        details = [record.get("event", "lore_log")]
+        details = [record.get("event", label)]
         if "model" in record:
             details.append(f"model={record['model']}")
         if "durationMs" in record:
             details.append(f"durationMs={record['durationMs']}")
-        print(f"[lore-log] {' '.join(details)}", file=sys.stderr)
+        print(f"[{label}-log] {' '.join(details)}", file=sys.stderr)
+
+
+def _append_lore_log_record(record: dict[str, Any]) -> None:
+    _append_jsonl_log_record(record, log_path=_resolve_lore_log_path(), label="lore")
+
+
+def _append_npc_chat_log_record(record: dict[str, Any]) -> None:
+    _append_jsonl_log_record(record, log_path=_resolve_npc_chat_log_path(), label="npc-chat")
 
 
 def _resolve_text_log_path(relative_path: Path) -> Path:
@@ -387,8 +399,10 @@ def _call_ollama(
     prompt: str,
     *,
     log_lore: bool = False,
+    log_npc_chat: bool = False,
     lore_kind: str | None = None,
     entity_id: str | None = None,
+    npc_id: str | None = None,
 ) -> str:
     endpoint = f"{base_url.rstrip('/')}/api/generate"
     body_payload = {
@@ -419,6 +433,18 @@ def _call_ollama(
                 "requestBody": body_payload,
             }
         )
+    if log_npc_chat:
+        _append_npc_chat_log_record(
+            {
+                "timestamp": _utc_timestamp(),
+                "event": "npc_chat_request",
+                "endpoint": endpoint,
+                "model": model,
+                "npcId": npc_id,
+                "prompt": prompt,
+                "requestBody": body_payload,
+            }
+        )
 
     try:
         with request.urlopen(req, timeout=60) as response:
@@ -442,6 +468,19 @@ def _call_ollama(
                     "errorMessage": str(exc),
                 }
             )
+        if log_npc_chat:
+            _append_npc_chat_log_record(
+                {
+                    "timestamp": _utc_timestamp(),
+                    "event": "npc_chat_error",
+                    "endpoint": endpoint,
+                    "model": model,
+                    "npcId": npc_id,
+                    "durationMs": round((perf_counter() - started_at) * 1000),
+                    "errorType": type(exc).__name__,
+                    "errorMessage": str(exc),
+                }
+            )
         if isinstance(exc, error.URLError):
             raise RuntimeError(f"Could not reach Ollama at {endpoint}.") from exc
         raise
@@ -458,6 +497,19 @@ def _call_ollama(
                 "durationMs": round((perf_counter() - started_at) * 1000),
                 "rawHttpPayload": raw_http_payload,
                 "responseText": text,
+            }
+        )
+    if log_npc_chat:
+        _append_npc_chat_log_record(
+            {
+                "timestamp": _utc_timestamp(),
+                "event": "npc_chat_response",
+                "endpoint": endpoint,
+                "model": model,
+                "npcId": npc_id,
+                "durationMs": round((perf_counter() - started_at) * 1000),
+                "rawHttpPayload": raw_http_payload,
+                "replyText": text,
             }
         )
     return text
@@ -973,5 +1025,11 @@ async def generate_npc_chat_reply(
         normalized_player_line,
         max_words,
     )
-    raw_text = _call_ollama(base_url, model, prompt)
+    raw_text = _call_ollama(
+        base_url,
+        model,
+        prompt,
+        log_npc_chat=True,
+        npc_id=npc_id,
+    )
     return _extract_npc_reply(raw_text, max_words)
