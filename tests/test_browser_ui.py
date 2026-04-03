@@ -399,6 +399,7 @@ def test_browser_npc_chat_focus_and_persistence() -> None:
 
         page.keyboard.press("Enter")
         page.wait_for_function("""() => document.querySelectorAll("#chat-window .chat-message").length === 2""")
+        page.wait_for_function("""() => document.activeElement?.id === "chat-input" """)
         assert page.locator("#chat-window .chat-message").nth(0).text_content() == "You: how can i help youw"
         assert (
             page.locator("#chat-window .chat-message").nth(1).text_content()

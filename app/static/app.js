@@ -970,6 +970,7 @@ function movePlayer(dx, dy) {
 async function sendChatLine() {
   const npc = getLoreNpcById(state.activeNpcId);
   const playerLine = chatInput.value.trim();
+  let shouldRestoreChatFocus = false;
 
   if (!npc) {
     updateStatus("Press E next to an NPC to start a conversation.");
@@ -1018,12 +1019,15 @@ async function sendChatLine() {
     renderChatPanel();
     saveState();
     updateStatus(`${npc.name} replies.`);
-    setChatFocus();
+    shouldRestoreChatFocus = true;
   } catch (error) {
     console.error(error);
     updateStatus("Could not reach this NPC right now.");
   } finally {
     setBusyFlag("chat", false);
+    if (shouldRestoreChatFocus && state.activeNpcId) {
+      setChatFocus();
+    }
   }
 }
 
