@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 from urllib import error, request
 
@@ -12,6 +15,7 @@ from app.mapgen import Village, village_payload
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_FILES = (BASE_DIR / ".env", BASE_DIR / ".env.example")
+DEFAULT_LORE_LOG_PATH = Path("logs/ollama_lore.jsonl")
 
 
 def _parse_env_file(path: Path) -> dict[str, str]:
@@ -44,6 +48,51 @@ def require_setting(name: str) -> str:
     if value:
         return value
     raise RuntimeError(f"Missing required setting: {name}")
+
+
+def _parse_bool_setting(name: str, default: bool) -> bool:
+    value = get_setting(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    return normalized in {"1", "true", "yes", "on"}
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _resolve_lore_log_path() -> Path:
+    configured = get_setting("OLLAMA_LORE_LOG_PATH")
+    if not configured:
+        return BASE_DIR / DEFAULT_LORE_LOG_PATH
+
+    path = Path(configured)
+    if not path.is_absolute():
+        path = BASE_DIR / path
+    return path
+
+
+def _append_lore_log_record(record: dict[str, Any]) -> None:
+    if not _parse_bool_setting("OLLAMA_LORE_LOG_ENABLED", default=True):
+        return
+
+    log_path = _resolve_lore_log_path()
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False))
+            handle.write("\n")
+    except OSError as exc:
+        print(f"Warning: could not write lore log to {log_path}: {exc}", file=sys.stderr)
+
+    if _parse_bool_setting("OLLAMA_LORE_LOG_CONSOLE", default=False):
+        details = [record.get("event", "lore_log")]
+        if "model" in record:
+            details.append(f"model={record['model']}")
+        if "durationMs" in record:
+            details.append(f"durationMs={record['durationMs']}")
+        print(f"[lore-log] {' '.join(details)}", file=sys.stderr)
 
 
 def village_id_from_bounds(left: int, right: int, top: int, bottom: int) -> str:
@@ -183,33 +232,71 @@ def _build_prompt(
     )
 
 
-def _call_ollama(base_url: str, model: str, prompt: str) -> str:
+def _call_ollama(base_url: str, model: str, prompt: str, *, log_lore: bool = False) -> str:
     endpoint = f"{base_url.rstrip('/')}/api/generate"
-    body = json.dumps(
-        {
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-            "format": "json",
-        },
-        ensure_ascii=False,
-    ).encode("utf-8")
+    body_payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "format": "json",
+    }
+    body = json.dumps(body_payload, ensure_ascii=False).encode("utf-8")
     req = request.Request(
         endpoint,
         data=body,
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    started_at = perf_counter()
+
+    if log_lore:
+        _append_lore_log_record(
+            {
+                "timestamp": _utc_timestamp(),
+                "event": "lore_request",
+                "endpoint": endpoint,
+                "model": model,
+                "prompt": prompt,
+                "requestBody": body_payload,
+            }
+        )
 
     try:
         with request.urlopen(req, timeout=60) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except error.URLError as exc:
-        raise RuntimeError(f"Could not reach Ollama at {endpoint}.") from exc
+            raw_http_payload = response.read().decode("utf-8")
+            payload = json.loads(raw_http_payload)
+        text = payload.get("response")
+        if not isinstance(text, str) or not text.strip():
+            raise RuntimeError("Ollama returned an empty lore response.")
+    except Exception as exc:
+        if log_lore:
+            _append_lore_log_record(
+                {
+                    "timestamp": _utc_timestamp(),
+                    "event": "lore_error",
+                    "endpoint": endpoint,
+                    "model": model,
+                    "durationMs": round((perf_counter() - started_at) * 1000),
+                    "errorType": type(exc).__name__,
+                    "errorMessage": str(exc),
+                }
+            )
+        if isinstance(exc, error.URLError):
+            raise RuntimeError(f"Could not reach Ollama at {endpoint}.") from exc
+        raise
 
-    text = payload.get("response")
-    if not isinstance(text, str) or not text.strip():
-        raise RuntimeError("Ollama returned an empty lore response.")
+    if log_lore:
+        _append_lore_log_record(
+            {
+                "timestamp": _utc_timestamp(),
+                "event": "lore_response",
+                "endpoint": endpoint,
+                "model": model,
+                "durationMs": round((perf_counter() - started_at) * 1000),
+                "rawHttpPayload": raw_http_payload,
+                "responseText": text,
+            }
+        )
     return text
 
 
@@ -401,7 +488,7 @@ async def generate_lore_payload(
     prompt = _build_prompt(world, villages, sorted_npcs)
     base_url = require_setting("OLLAMA_BASE_URL")
     model = require_setting("OLLAMA_GM_MODEL")
-    raw_text = _call_ollama(base_url, model, prompt)
+    raw_text = _call_ollama(base_url, model, prompt, log_lore=True)
     raw_payload = _extract_json_object(raw_text)
     return _merge_lore(raw_payload, villages, sorted_npcs)
 

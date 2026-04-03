@@ -34,3 +34,13 @@ Map generation currently uses only the `# Ground` tiles from [assets/unicode/emo
 ## Tests
 
 Run `pytest`.
+
+## Lore Log Formatting
+
+If you want to inspect the lore JSONL logs more easily in VS Code, convert them into a pretty JSON array:
+
+`python3 scripts/jsonl_to_pretty_json.py logs/ollama_lore.jsonl`
+
+This writes `logs/ollama_lore.pretty.json` by default. You can also choose an explicit output path:
+
+`python3 scripts/jsonl_to_pretty_json.py logs/ollama_lore.jsonl --output logs/ollama_lore.json`

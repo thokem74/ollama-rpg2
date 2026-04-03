@@ -1,10 +1,13 @@
 import asyncio
 import json
 from collections import deque
+from datetime import datetime
+from urllib import error
 
 from fastapi import HTTPException
 import pytest
 
+import app.lore as lore
 from app.content import load_tile_catalog
 from app.main import NpcChatRequest, LoreRequest, app, create_lore, create_map, create_npc_chat
 from app.mapgen import (
@@ -214,7 +217,7 @@ def test_lore_generate_endpoint_returns_world_village_and_npc_lore(monkeypatch) 
 
     monkeypatch.setattr(
         "app.lore._call_ollama",
-        lambda base_url, model, prompt: json.dumps(
+        lambda base_url, model, prompt, **kwargs: json.dumps(
             {
                 "worldLore": "A patient frontier grows between fields and footpaths.",
                 "villages": [
@@ -271,7 +274,7 @@ def test_lore_generate_endpoint_rejects_malformed_ollama_output(monkeypatch) -> 
 
     monkeypatch.setattr(
         "app.lore._call_ollama",
-        lambda base_url, model, prompt: "not valid json at all",
+        lambda base_url, model, prompt, **kwargs: "not valid json at all",
     )
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://ollama.test")
     monkeypatch.setenv("OLLAMA_GM_MODEL", "gm-model")
@@ -291,7 +294,7 @@ def test_lore_generate_endpoint_repairs_common_ollama_formatting_and_id_issues(m
 
     monkeypatch.setattr(
         "app.lore._call_ollama",
-        lambda base_url, model, prompt: (
+        lambda base_url, model, prompt, **kwargs: (
             'Here is your lore:\n'
             + json.dumps(
                 {
@@ -325,6 +328,90 @@ def test_lore_generate_endpoint_repairs_common_ollama_formatting_and_id_issues(m
     assert payload["villages"][0]["name"] == "Bramble Post"
     assert payload["npcs"][0]["id"] == "npc:3:1"
     assert payload["npcs"][0]["name"] == "Edda Pike"
+
+
+def test_call_ollama_logs_lore_request_and_response(monkeypatch, tmp_path) -> None:
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "response": '{"worldLore":"A bright path crosses the valley.","villages":[],"npcs":[]}'
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+
+    monkeypatch.setenv("OLLAMA_LORE_LOG_ENABLED", "true")
+    monkeypatch.setenv("OLLAMA_LORE_LOG_PATH", str(tmp_path / "custom-lore.jsonl"))
+    monkeypatch.setattr(lore.request, "urlopen", lambda req, timeout=60: FakeResponse())
+
+    prompt = "Write concise lore."
+    text = lore._call_ollama("http://ollama.test", "gm-model", prompt, log_lore=True)
+
+    assert '"worldLore":"A bright path crosses the valley."' in text
+
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "custom-lore.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["event"] for record in records] == ["lore_request", "lore_response"]
+    assert records[0]["endpoint"] == "http://ollama.test/api/generate"
+    assert records[0]["model"] == "gm-model"
+    assert records[0]["prompt"] == prompt
+    assert records[0]["requestBody"]["prompt"] == prompt
+    assert records[1]["rawHttpPayload"]
+    assert records[1]["responseText"] == text
+    assert isinstance(records[1]["durationMs"], int)
+    assert records[1]["durationMs"] >= 0
+    for record in records:
+        assert record["timestamp"].endswith("Z")
+        datetime.fromisoformat(record["timestamp"].replace("Z", "+00:00"))
+
+
+def test_call_ollama_logs_lore_errors(monkeypatch, tmp_path) -> None:
+    def fake_urlopen(req, timeout=60):
+        raise error.URLError("connection refused")
+
+    monkeypatch.setenv("OLLAMA_LORE_LOG_ENABLED", "true")
+    monkeypatch.setenv("OLLAMA_LORE_LOG_PATH", str(tmp_path / "errors.jsonl"))
+    monkeypatch.setattr(lore.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        lore._call_ollama("http://ollama.test", "gm-model", "Prompt", log_lore=True)
+
+    assert exc_info.value.args[0] == "Could not reach Ollama at http://ollama.test/api/generate."
+
+    records = [json.loads(line) for line in (tmp_path / "errors.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [record["event"] for record in records] == ["lore_request", "lore_error"]
+    assert records[1]["errorType"] == "URLError"
+    assert "connection refused" in records[1]["errorMessage"]
+    assert isinstance(records[1]["durationMs"], int)
+
+
+def test_call_ollama_skips_logging_when_disabled(monkeypatch, tmp_path) -> None:
+    class FakeResponse:
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps({"response": '{"worldLore":"Quiet roads.","villages":[],"npcs":[]}'}, ensure_ascii=False).encode("utf-8")
+
+    log_path = tmp_path / "disabled.jsonl"
+    monkeypatch.setenv("OLLAMA_LORE_LOG_ENABLED", "false")
+    monkeypatch.setenv("OLLAMA_LORE_LOG_PATH", str(log_path))
+    monkeypatch.setattr(lore.request, "urlopen", lambda req, timeout=60: FakeResponse())
+
+    lore._call_ollama("http://ollama.test", "gm-model", "Prompt", log_lore=True)
+
+    assert not log_path.exists()
 
 
 def test_app_routes_include_ui_and_generation_endpoint() -> None:
