@@ -22,6 +22,21 @@ WORLD_LORE_TEXT_LOG_PATH = Path("logs/world_lore.txt")
 VILLAGE_LORE_TEXT_LOG_PATH = Path("logs/village_lore.txt")
 NPC_LORE_TEXT_LOG_PATH = Path("logs/npc_lore.txt")
 NPC_CHAT_TEXT_LOG_PATH = Path("logs/npc_chat.txt")
+SUPPORTED_LANGUAGES = {"en", "de"}
+
+
+def normalize_language(language: str | None) -> str:
+    if language in SUPPORTED_LANGUAGES:
+        return language
+    return "en"
+
+
+def _language_name(language: str) -> str:
+    return "German" if normalize_language(language) == "de" else "English"
+
+
+def _language_instruction(language: str) -> str:
+    return f"Write every natural-language field in {_language_name(language)}.\n"
 
 
 def _parse_env_file(path: Path) -> dict[str, str]:
@@ -277,6 +292,7 @@ def _build_world_lore_prompt(
     world_summary: dict[str, Any],
     village_count: int,
     npc_count: int,
+    language: str,
 ) -> str:
     context = {
         "world": world_summary,
@@ -286,6 +302,7 @@ def _build_world_lore_prompt(
     return (
         "You are the game master for a whimsical emoji RPG world.\n"
         "Write concise, flavorful world lore for the provided world state.\n"
+        f"{_language_instruction(language)}"
         "Return strict JSON only with this shape:\n"
         '{"worldLore":"string"}\n'
         "Rules:\n"
@@ -298,7 +315,7 @@ def _build_world_lore_prompt(
     )
 
 
-def _build_village_lore_prompt(world_lore: str, village: dict[str, Any]) -> str:
+def _build_village_lore_prompt(world_lore: str, village: dict[str, Any], language: str) -> str:
     context = {
         "worldLore": world_lore,
         "village": {
@@ -311,6 +328,7 @@ def _build_village_lore_prompt(world_lore: str, village: dict[str, Any]) -> str:
     return (
         "You are the game master for a whimsical emoji RPG world.\n"
         "Write a concise name and description for exactly one village.\n"
+        f"{_language_instruction(language)}"
         "Return strict JSON only with this shape:\n"
         '{"id":"string","name":"string","description":"string"}\n'
         "Rules:\n"
@@ -322,7 +340,7 @@ def _build_village_lore_prompt(world_lore: str, village: dict[str, Any]) -> str:
     )
 
 
-def _build_npc_lore_prompt(world_lore: str, npc: dict[str, Any]) -> str:
+def _build_npc_lore_prompt(world_lore: str, npc: dict[str, Any], language: str) -> str:
     context = {
         "worldLore": world_lore,
         "npc": {
@@ -335,6 +353,7 @@ def _build_npc_lore_prompt(world_lore: str, npc: dict[str, Any]) -> str:
     return (
         "You are the game master for a whimsical emoji RPG world.\n"
         "Write a concise name and description for exactly one NPC.\n"
+        f"{_language_instruction(language)}"
         "Return strict JSON only with this shape:\n"
         '{"id":"string","name":"string","description":"string"}\n'
         "Rules:\n"
@@ -350,6 +369,7 @@ def _build_village_repair_prompt(
     world_lore: str,
     village: dict[str, Any],
     taken_names: list[str],
+    language: str,
 ) -> str:
     context = {
         "worldLore": world_lore,
@@ -365,6 +385,7 @@ def _build_village_repair_prompt(
         "You are the game master for a whimsical emoji RPG world.\n"
         "A previously generated village name collided with another village name.\n"
         "Write a replacement name and description for exactly one village.\n"
+        f"{_language_instruction(language)}"
         "Return strict JSON only with this shape:\n"
         '{"id":"string","name":"string","description":"string"}\n'
         "Rules:\n"
@@ -381,6 +402,7 @@ def _build_npc_repair_prompt(
     world_lore: str,
     npc: dict[str, Any],
     taken_names: list[str],
+    language: str,
 ) -> str:
     context = {
         "worldLore": world_lore,
@@ -396,6 +418,7 @@ def _build_npc_repair_prompt(
         "You are the game master for a whimsical emoji RPG world.\n"
         "A previously generated NPC name collided with another NPC name.\n"
         "Write a replacement name and description for exactly one NPC.\n"
+        f"{_language_instruction(language)}"
         "Return strict JSON only with this shape:\n"
         '{"id":"string","name":"string","description":"string"}\n'
         "Rules:\n"
@@ -573,31 +596,47 @@ def _validate_lore_text(value: Any, field_name: str) -> str:
     return value.strip()
 
 
-def _fallback_world_lore(village_count: int, npc_count: int) -> str:
+def _fallback_world_lore(village_count: int, npc_count: int, language: str) -> str:
+    if normalize_language(language) == "de":
+        return (
+            f"Eine junge Grenzregion verbindet {village_count} Doerfer auf der Karte, und "
+            f"{npc_count} wandernde Gestalten tragen Geschichten zwischen ihnen hin und her."
+        )
     return (
         f"A young frontier links {village_count} villages across the map, and "
         f"{npc_count} wandering figures carry stories between them."
     )
 
 
-def _fallback_village_name(village: dict[str, Any], index: int) -> str:
+def _fallback_village_name(village: dict[str, Any], index: int, language: str) -> str:
     center = village["center"]
+    if normalize_language(language) == "de":
+        return f"Dorf {index + 1} ({center['x']},{center['y']})"
     return f"Village {index + 1} ({center['x']},{center['y']})"
 
 
-def _fallback_village_description(village: dict[str, Any]) -> str:
+def _fallback_village_description(village: dict[str, Any], language: str) -> str:
     center = village["center"]
+    if normalize_language(language) == "de":
+        return (
+            f"Ein abgelegener Ort nahe ({center['x']}, {center['y']}), an dem Reisende sich "
+            "sammeln, bevor sie die Grenzregion durchqueren."
+        )
     return (
         f"A settled outpost near ({center['x']}, {center['y']}) where travelers gather "
         "before crossing the frontier."
     )
 
 
-def _fallback_npc_name(npc: dict[str, Any], index: int) -> str:
+def _fallback_npc_name(npc: dict[str, Any], index: int, language: str) -> str:
+    if normalize_language(language) == "de":
+        return f"Wanderer {index + 1} ({npc['x']},{npc['y']})"
     return f"Wanderer {index + 1} ({npc['x']},{npc['y']})"
 
 
-def _fallback_npc_description(npc: dict[str, Any]) -> str:
+def _fallback_npc_description(npc: dict[str, Any], language: str) -> str:
+    if normalize_language(language) == "de":
+        return f"Ein umherziehender Mensch, der oft in der Naehe von ({npc['x']}, {npc['y']}) zu sehen ist."
     return f"A roaming local often seen near ({npc['x']}, {npc['y']})."
 
 
@@ -675,6 +714,7 @@ def _normalize_named_entries(
     entries: Any,
     expected_entities: list[dict[str, Any]],
     kind: str,
+    language: str,
 ) -> dict[str, dict[str, str]]:
     expected_ids = {entity["id"] for entity in expected_entities}
     explicit_matches: dict[str, dict[str, str]] = {}
@@ -704,11 +744,11 @@ def _normalize_named_entries(
             positional_index += 1
 
         if kind == "village":
-            fallback_name = _fallback_village_name(entity, index)
-            fallback_description = _fallback_village_description(entity)
+            fallback_name = _fallback_village_name(entity, index, language)
+            fallback_description = _fallback_village_description(entity, language)
         else:
-            fallback_name = _fallback_npc_name(entity, index)
-            fallback_description = _fallback_npc_description(entity)
+            fallback_name = _fallback_npc_name(entity, index, language)
+            fallback_description = _fallback_npc_description(entity, language)
 
         normalized[entity["id"]] = {
             "name": entry["name"] if entry and entry.get("name") else fallback_name,
@@ -724,10 +764,13 @@ def _merge_lore(
     raw_payload: dict[str, Any],
     villages: list[dict[str, Any]],
     npcs: list[dict[str, Any]],
+    language: str,
 ) -> dict[str, Any]:
-    world_lore = _sanitize_text(raw_payload.get("worldLore")) or _fallback_world_lore(len(villages), len(npcs))
-    village_lore = _normalize_named_entries(raw_payload.get("villages"), villages, "village")
-    npc_lore = _normalize_named_entries(raw_payload.get("npcs"), npcs, "npc")
+    world_lore = _sanitize_text(raw_payload.get("worldLore")) or _fallback_world_lore(
+        len(villages), len(npcs), language
+    )
+    village_lore = _normalize_named_entries(raw_payload.get("villages"), villages, "village", language)
+    npc_lore = _normalize_named_entries(raw_payload.get("npcs"), npcs, "npc", language)
 
     merged_villages = [
         {
@@ -757,8 +800,10 @@ async def generate_lore_payload(
     world: list[list[str]],
     npcs: list[dict[str, Any]],
     catalog: TileCatalog,
+    language: str = "en",
 ) -> dict[str, Any]:
     validate_world_shape(world)
+    normalized_language = normalize_language(language)
 
     villages = derive_villages_from_world(world, catalog)
     sorted_npcs = sorted(
@@ -796,7 +841,9 @@ async def generate_lore_payload(
         )
 
     async def generate_world_lore() -> str:
-        prompt = _build_world_lore_prompt(world_summary, len(villages), len(sorted_npcs))
+        prompt = _build_world_lore_prompt(
+            world_summary, len(villages), len(sorted_npcs), normalized_language
+        )
         last_error: Exception | None = None
         for _ in range(retry_count + 1):
             try:
@@ -816,7 +863,7 @@ async def generate_lore_payload(
                     "errorMessage": str(last_error),
                 }
             )
-        return _fallback_world_lore(len(villages), len(sorted_npcs))
+        return _fallback_world_lore(len(villages), len(sorted_npcs), normalized_language)
 
     async def generate_named_entry(
         entity: dict[str, Any],
@@ -824,9 +871,9 @@ async def generate_lore_payload(
         lore_kind: str,
     ) -> dict[str, str] | None:
         prompt = (
-            _build_village_lore_prompt(world_lore, entity)
+            _build_village_lore_prompt(world_lore, entity, normalized_language)
             if lore_kind == "village"
-            else _build_npc_lore_prompt(world_lore, entity)
+            else _build_npc_lore_prompt(world_lore, entity, normalized_language)
         )
         last_error: Exception | None = None
         for _ in range(retry_count + 1):
@@ -898,6 +945,7 @@ async def generate_lore_payload(
                     world_lore,
                     entity,
                     sorted(entry["name"] for entry in repaired_entries.values()),
+                    normalized_language,
                 )
                 repair_kind = "village_repair"
             else:
@@ -905,6 +953,7 @@ async def generate_lore_payload(
                     world_lore,
                     entity,
                     sorted(entry["name"] for entry in repaired_entries.values()),
+                    normalized_language,
                 )
                 repair_kind = "npc_repair"
 
@@ -945,7 +994,7 @@ async def generate_lore_payload(
         "villages": village_entries,
         "npcs": npc_entries,
     }
-    merged_payload = _merge_lore(raw_payload, villages, sorted_npcs)
+    merged_payload = _merge_lore(raw_payload, villages, sorted_npcs, normalized_language)
     _append_final_lore_text_logs(merged_payload)
     return merged_payload
 
@@ -956,6 +1005,7 @@ def _build_npc_chat_prompt(
     transcript: list[list[str]],
     player_line: str,
     max_words: int,
+    language: str,
 ) -> str:
     context = {
         "worldLore": world_lore,
@@ -970,6 +1020,7 @@ def _build_npc_chat_prompt(
         "Base your response only on the NPC's name, description, world lore, and recent transcript.\n"
         "Do not speak as a narrator, system, assistant, or any other character.\n"
         "Reply with no more than the provided maxWords limit.\n"
+        f"{_language_instruction(language)}"
         "Return strict JSON only with this shape:\n"
         '{"reply":"string"}\n'
         "Context:\n"
@@ -996,6 +1047,7 @@ async def generate_npc_chat_reply(
     npc: dict[str, str],
     transcript: list[list[str]],
     player_line: str,
+    language: str = "en",
 ) -> str:
     if not npc_id.strip():
         raise ValueError("npcId must be a non-empty string.")
@@ -1007,6 +1059,7 @@ async def generate_npc_chat_reply(
     normalized_player_line = _sanitize_text(player_line)
     if not normalized_player_line:
         raise ValueError("playerLine must be a non-empty string.")
+    normalized_language = normalize_language(language)
 
     normalized_npc = {
         "id": _sanitize_text(npc.get("id")),
@@ -1039,6 +1092,7 @@ async def generate_npc_chat_reply(
         normalized_transcript,
         normalized_player_line,
         max_words,
+        normalized_language,
     )
     _append_npc_chat_text_log_line("Player", normalized_player_line)
     try:

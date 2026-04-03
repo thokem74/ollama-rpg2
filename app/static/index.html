@@ -11,9 +11,18 @@
 <body>
   <main class="app-shell">
     <section class="hero">
-      <p class="eyebrow">World Seedling</p>
+      <div class="hero-topline">
+        <p id="hero-eyebrow" class="eyebrow">World Seedling</p>
+        <div class="language-picker" role="group" aria-label="Language">
+          <span id="language-label" class="language-label">Language</span>
+          <div class="language-options">
+            <button class="language-option" data-language="en" type="button" aria-pressed="true">English</button>
+            <button class="language-option" data-language="de" type="button" aria-pressed="false">Deutsch</button>
+          </div>
+        </div>
+      </div>
       <h1>Emoji Frontier</h1>
-      <p class="intro">
+      <p id="hero-intro" class="intro">
         Generate a 128x128 world, uncover lore as you explore a 30x22
         viewport, move with WSAD and press E to chat with nearby NPCs.
       </p>
@@ -29,8 +38,8 @@
       <aside class="history-panel">
         <div class="history-header">
           <div>
-            <h2>History</h2>
-            <p>World lore and discoveries</p>
+            <h2 id="history-title">History</h2>
+            <p id="history-subtitle">World lore and discoveries</p>
           </div>
         </div>
         <div id="history-window" class="history-window" aria-live="polite">
@@ -41,8 +50,8 @@
       <section class="viewport-panel">
         <div class="viewport-header">
           <div>
-            <h2>Viewport</h2>
-            <p>30 x 22 tiles</p>
+            <h2 id="viewport-title">Viewport</h2>
+            <p id="viewport-subtitle">30 x 22 tiles</p>
           </div>
           <div id="player-position">Player: -, -</div>
         </div>
@@ -54,7 +63,7 @@
       <aside class="chat-panel">
         <div class="chat-header">
           <div>
-            <p class="eyebrow">Village Voices</p>
+            <p id="chat-eyebrow" class="eyebrow">Village Voices</p>
             <h2 id="chat-title">No conversation</h2>
           </div>
         </div>
@@ -65,7 +74,7 @@
           <p class="chat-empty">No NPC selected.</p>
         </div>
         <form id="chat-form" class="chat-form">
-          <label class="sr-only" for="chat-input">Your line</label>
+          <label id="chat-input-label" class="sr-only" for="chat-input">Your line</label>
           <textarea id="chat-input" rows="4" placeholder="Type what you want to say, then press Enter."></textarea>
           <button id="chat-send-button" type="submit">Send line</button>
         </form>
